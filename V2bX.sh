@@ -638,47 +638,78 @@ generate_config_file() {
             echo -e "${green}将保留已有节点并追加新节点${plain}"
             # 使用 Python 提取现有节点（Python 通常已安装）
             if command -v python3 &> /dev/null; then
-                existing_nodes=$(python3 << 'PYTHON_SCRIPT'
+                result=$(python3 << 'PYTHON_SCRIPT'
 import json
 import sys
 try:
     with open('/etc/V2bX/config.json', 'r', encoding='utf-8') as f:
         config = json.load(f)
     nodes = config.get('Nodes', [])
+    if not nodes:
+        sys.exit(1)
+    # 先输出节点数量（用于显示）
+    print(f"NODE_COUNT:{len(nodes)}")
+    # 然后输出格式化的节点 JSON（每个节点多行，带缩进）
     for node in nodes:
-        # 输出格式化的节点 JSON，每行一个节点
+        # 使用 indent=8 格式化，但我们需要正确计算节点数量
         print(json.dumps(node, indent=8, ensure_ascii=False))
+    sys.exit(0)
 except Exception as e:
+    print(f"Error: {e}", file=sys.stderr)
     sys.exit(1)
 PYTHON_SCRIPT
 )
-                if [ $? -eq 0 ] && [ -n "$existing_nodes" ]; then
-                    # 格式化输出，添加逗号
-                    existing_nodes=$(echo "$existing_nodes" | sed 's/$/,/')
-                    node_count=$(echo "$existing_nodes" | wc -l)
-                    echo -e "${green}已读取 $node_count 个现有节点${plain}"
+                exit_code=$?
+                if [ $exit_code -eq 0 ] && [ -n "$result" ]; then
+                    # 提取节点数量（第一行）
+                    node_count=$(echo "$result" | head -n 1 | grep "NODE_COUNT:" | cut -d: -f2)
+                    # 提取节点内容（跳过第一行）
+                    existing_nodes=$(echo "$result" | tail -n +2)
+                    if [ -n "$existing_nodes" ] && [ -n "$node_count" ]; then
+                        # 为每个节点添加逗号（在节点结束的 } 后面）
+                        # 注意：由于每个节点是多行，我们需要在最后一个 } 后添加逗号
+                        existing_nodes=$(echo "$existing_nodes" | sed 's/^        }$/        },/')
+                        # 移除最后一个节点的逗号（最后一个 } 后面不应该有逗号）
+                        existing_nodes=$(echo "$existing_nodes" | sed '$ s/,$//')
+                        echo -e "${green}已读取 $node_count 个现有节点${plain}"
+                    else
+                        echo -e "${yellow}未找到现有节点，将创建新配置${plain}"
+                        existing_nodes=""
+                    fi
                 else
                     echo -e "${yellow}读取现有节点失败，将创建新配置${plain}"
                     existing_nodes=""
                 fi
             elif command -v python &> /dev/null; then
-                existing_nodes=$(python << 'PYTHON_SCRIPT'
+                result=$(python << 'PYTHON_SCRIPT'
 import json
 import sys
 try:
     with open('/etc/V2bX/config.json', 'r', encoding='utf-8') as f:
         config = json.load(f)
     nodes = config.get('Nodes', [])
+    if not nodes:
+        sys.exit(1)
+    print(f"NODE_COUNT:{len(nodes)}")
     for node in nodes:
         print(json.dumps(node, indent=8, ensure_ascii=False))
+    sys.exit(0)
 except Exception as e:
+    print(f"Error: {e}", file=sys.stderr)
     sys.exit(1)
 PYTHON_SCRIPT
 )
-                if [ $? -eq 0 ] && [ -n "$existing_nodes" ]; then
-                    existing_nodes=$(echo "$existing_nodes" | sed 's/$/,/')
-                    node_count=$(echo "$existing_nodes" | wc -l)
-                    echo -e "${green}已读取 $node_count 个现有节点${plain}"
+                exit_code=$?
+                if [ $exit_code -eq 0 ] && [ -n "$result" ]; then
+                    node_count=$(echo "$result" | head -n 1 | grep "NODE_COUNT:" | cut -d: -f2)
+                    existing_nodes=$(echo "$result" | tail -n +2)
+                    if [ -n "$existing_nodes" ] && [ -n "$node_count" ]; then
+                        existing_nodes=$(echo "$existing_nodes" | sed 's/^        }$/        },/')
+                        existing_nodes=$(echo "$existing_nodes" | sed '$ s/,$//')
+                        echo -e "${green}已读取 $node_count 个现有节点${plain}"
+                    else
+                        existing_nodes=""
+                    fi
                 else
                     existing_nodes=""
                 fi
