@@ -627,6 +627,68 @@ generate_config_file() {
         exit 0
     fi
     
+    # 读取现有配置文件中的节点（如果存在）
+    existing_nodes=""
+    if [ -f "/etc/V2bX/config.json" ]; then
+        echo -e "${green}检测到现有配置文件${plain}"
+        read -rp "是否保留已有节点配置并追加新节点？(y/n，默认y): " keep_existing
+        if [[ "$keep_existing" =~ ^[Nn][Oo]? ]]; then
+            echo -e "${yellow}将创建全新配置，不保留已有节点${plain}"
+        else
+            echo -e "${green}将保留已有节点并追加新节点${plain}"
+            # 使用 Python 提取现有节点（Python 通常已安装）
+            if command -v python3 &> /dev/null; then
+                existing_nodes=$(python3 << 'PYTHON_SCRIPT'
+import json
+import sys
+try:
+    with open('/etc/V2bX/config.json', 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    nodes = config.get('Nodes', [])
+    for node in nodes:
+        # 输出格式化的节点 JSON，每行一个节点
+        print(json.dumps(node, indent=8, ensure_ascii=False))
+except Exception as e:
+    sys.exit(1)
+PYTHON_SCRIPT
+)
+                if [ $? -eq 0 ] && [ -n "$existing_nodes" ]; then
+                    # 格式化输出，添加逗号
+                    existing_nodes=$(echo "$existing_nodes" | sed 's/$/,/')
+                    node_count=$(echo "$existing_nodes" | wc -l)
+                    echo -e "${green}已读取 $node_count 个现有节点${plain}"
+                else
+                    echo -e "${yellow}读取现有节点失败，将创建新配置${plain}"
+                    existing_nodes=""
+                fi
+            elif command -v python &> /dev/null; then
+                existing_nodes=$(python << 'PYTHON_SCRIPT'
+import json
+import sys
+try:
+    with open('/etc/V2bX/config.json', 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    nodes = config.get('Nodes', [])
+    for node in nodes:
+        print(json.dumps(node, indent=8, ensure_ascii=False))
+except Exception as e:
+    sys.exit(1)
+PYTHON_SCRIPT
+)
+                if [ $? -eq 0 ] && [ -n "$existing_nodes" ]; then
+                    existing_nodes=$(echo "$existing_nodes" | sed 's/$/,/')
+                    node_count=$(echo "$existing_nodes" | wc -l)
+                    echo -e "${green}已读取 $node_count 个现有节点${plain}"
+                else
+                    existing_nodes=""
+                fi
+            else
+                echo -e "${yellow}未找到 Python，无法读取现有节点，将创建新配置${plain}"
+                echo -e "${yellow}建议安装 Python 或手动编辑配置文件添加节点${plain}"
+            fi
+        fi
+    fi
+    
     nodes_config=()
     first_node=true
     core_xray=false
@@ -711,9 +773,31 @@ generate_config_file() {
     cd /etc/V2bX
     
     # 备份旧的配置文件
-    mv config.json config.json.bak
+    if [ -f "config.json" ]; then
+        cp config.json config.json.bak.$(date +%Y%m%d_%H%M%S)
+    fi
+    
     nodes_config_str="${nodes_config[*]}"
     formatted_nodes_config="${nodes_config_str%,}"
+    
+    # 合并现有节点和新节点
+    all_nodes_config=""
+    if [ -n "$existing_nodes" ] && [ -n "$formatted_nodes_config" ]; then
+        # 有现有节点和新节点，合并
+        # 移除 existing_nodes 最后一个逗号（如果有）
+        existing_nodes_clean=$(echo "$existing_nodes" | sed '$ s/,$//')
+        all_nodes_config="$existing_nodes_clean,
+        $formatted_nodes_config"
+    elif [ -n "$existing_nodes" ]; then
+        # 只有现有节点（移除最后一个逗号）
+        all_nodes_config=$(echo "$existing_nodes" | sed '$ s/,$//')
+    elif [ -n "$formatted_nodes_config" ]; then
+        # 只有新节点
+        all_nodes_config="$formatted_nodes_config"
+    fi
+    
+    # 清理格式（移除空行）
+    all_nodes_config=$(echo "$all_nodes_config" | sed '/^[[:space:]]*$/d')
 
     # 创建 config.json 文件
     cat <<EOF > /etc/V2bX/config.json
@@ -723,7 +807,9 @@ generate_config_file() {
         "Output": ""
     },
     "Cores": $cores_config,
-    "Nodes": [$formatted_nodes_config]
+    "Nodes": [
+$all_nodes_config
+    ]
 }
 EOF
     
