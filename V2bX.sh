@@ -1143,7 +1143,7 @@ show_usage() {
 
 show_menu() {
     echo -e "
-  ${green}V2bX 后端管理脚本，${plain}${red}不适用于docker${plain}
+  ${green}V2bX 后端管理脚本 ${plain}${red}不适用于docker${plain}
 --- https://github.com/JJOGGER/V2bX ---
   ${green}0.${plain} 修改配置
 ————————————————
