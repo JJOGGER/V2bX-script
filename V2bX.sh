@@ -484,6 +484,8 @@ add_node_config() {
         esac
     fi
     fastopen=true
+    isreality=""
+    istls=""
     if [ "$NodeType" == "vless" ]; then
         read -rp "请选择是否为reality节点？(y/n)" isreality
     elif [ "$NodeType" == "hysteria" ] || [ "$NodeType" == "hysteria2" ] || [ "$NodeType" == "tuic" ] || [ "$NodeType" == "anytls" ]; then
@@ -666,11 +668,8 @@ PYTHON_SCRIPT
                     # 提取节点内容（跳过第一行）
                     existing_nodes=$(echo "$result" | tail -n +2)
                     if [ -n "$existing_nodes" ] && [ -n "$node_count" ]; then
-                        # 为每个节点添加逗号（在节点结束的 } 后面）
-                        # 注意：由于每个节点是多行，我们需要在最后一个 } 后添加逗号
-                        existing_nodes=$(echo "$existing_nodes" | sed 's/^        }$/        },/')
-                        # 移除最后一个节点的逗号（最后一个 } 后面不应该有逗号）
-                        existing_nodes=$(echo "$existing_nodes" | sed '$ s/,$//')
+                        # 为每个节点添加逗号（在节点结束的 } 后面），然后移除最后一个节点的逗号
+                        existing_nodes=$(echo "$existing_nodes" | sed 's/^        }$/        },/' | sed -E '$ s/},[[:space:]]*$/}/')
                         echo -e "${green}已读取 $node_count 个现有节点${plain}"
                     else
                         echo -e "${yellow}未找到现有节点，将创建新配置${plain}"
@@ -704,8 +703,8 @@ PYTHON_SCRIPT
                     node_count=$(echo "$result" | head -n 1 | grep "NODE_COUNT:" | cut -d: -f2)
                     existing_nodes=$(echo "$result" | tail -n +2)
                     if [ -n "$existing_nodes" ] && [ -n "$node_count" ]; then
-                        existing_nodes=$(echo "$existing_nodes" | sed 's/^        }$/        },/')
-                        existing_nodes=$(echo "$existing_nodes" | sed '$ s/,$//')
+                        # 为每个节点添加逗号，然后移除最后一个节点的逗号
+                        existing_nodes=$(echo "$existing_nodes" | sed 's/^        }$/        },/' | sed -E '$ s/},[[:space:]]*$/}/')
                         echo -e "${green}已读取 $node_count 个现有节点${plain}"
                     else
                         existing_nodes=""
@@ -724,6 +723,7 @@ PYTHON_SCRIPT
     first_node=true
     core_xray=false
     core_sing=false
+    core_hysteria2=false
     fixed_api_info=false
     check_api=false
     
@@ -798,7 +798,8 @@ PYTHON_SCRIPT
 
     # 移除最后一个逗号并关闭数组
     cores_config+="]"
-    cores_config=$(echo "$cores_config" | sed 's/},]$/}]/')
+    # 更精确地移除最后一个核心配置的逗号
+    cores_config=$(echo "$cores_config" | sed -E 's/},[[:space:]]*\]$/}]/')
 
     # 切换到配置文件目录
     cd /etc/V2bX
@@ -808,20 +809,34 @@ PYTHON_SCRIPT
         cp config.json config.json.bak.$(date +%Y%m%d_%H%M%S)
     fi
     
-    nodes_config_str="${nodes_config[*]}"
-    formatted_nodes_config="${nodes_config_str%,}"
+    # 正确连接节点配置数组，使用换行符分隔
+    # 先移除每个节点配置末尾的逗号，然后重新添加（除了最后一个）
+    formatted_nodes_config=""
+    node_count=${#nodes_config[@]}
+    for i in "${!nodes_config[@]}"; do
+        node="${nodes_config[$i]}"
+        # 移除节点配置末尾的逗号和换行符
+        node=$(echo "$node" | sed 's/,[[:space:]]*$//' | sed 's/[[:space:]]*$//')
+        # 如果不是最后一个节点，添加逗号
+        if [ $i -lt $((node_count - 1)) ]; then
+            formatted_nodes_config+="$node,
+"
+        else
+            formatted_nodes_config+="$node"
+        fi
+    done
     
     # 合并现有节点和新节点
     all_nodes_config=""
     if [ -n "$existing_nodes" ] && [ -n "$formatted_nodes_config" ]; then
         # 有现有节点和新节点，合并
-        # 移除 existing_nodes 最后一个逗号（如果有）
-        existing_nodes_clean=$(echo "$existing_nodes" | sed '$ s/,$//')
+        # 移除 existing_nodes 最后一个逗号（精确匹配最后一个 } 后的逗号）
+        existing_nodes_clean=$(echo "$existing_nodes" | sed -E 's/^([[:space:]]*)\}$/\1}/' | sed -E '$ s/},[[:space:]]*$/}/')
         all_nodes_config="$existing_nodes_clean,
         $formatted_nodes_config"
     elif [ -n "$existing_nodes" ]; then
         # 只有现有节点（移除最后一个逗号）
-        all_nodes_config=$(echo "$existing_nodes" | sed '$ s/,$//')
+        all_nodes_config=$(echo "$existing_nodes" | sed -E 's/^([[:space:]]*)\}$/\1}/' | sed -E '$ s/},[[:space:]]*$/}/')
     elif [ -n "$formatted_nodes_config" ]; then
         # 只有新节点
         all_nodes_config="$formatted_nodes_config"
@@ -843,6 +858,56 @@ $all_nodes_config
     ]
 }
 EOF
+
+    # 验证生成的JSON格式是否正确
+    if command -v python3 &> /dev/null; then
+        if python3 -m json.tool /etc/V2bX/config.json > /dev/null 2>&1; then
+            echo -e "${green}JSON格式验证通过${plain}"
+        else
+            echo -e "${red}警告：生成的JSON格式可能有问题，请检查配置文件${plain}"
+            echo -e "${yellow}正在尝试修复JSON格式...${plain}"
+            # 尝试修复常见的JSON格式问题
+            python3 << 'PYTHON_FIX'
+import json
+import re
+import sys
+
+try:
+    with open('/etc/V2bX/config.json', 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # 修复常见的JSON格式问题：移除对象末尾的逗号
+    # 匹配 }, 或 } 后面跟逗号的情况（在数组或对象末尾）
+    content = re.sub(r'(\})\s*,(\s*[}\]])', r'\1\2', content)
+    
+    # 尝试解析JSON
+    config = json.loads(content)
+    
+    # 重新格式化并保存
+    with open('/etc/V2bX/config.json', 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
+    
+    print("JSON格式已修复")
+    sys.exit(0)
+except Exception as e:
+    print(f"修复失败: {e}", file=sys.stderr)
+    sys.exit(1)
+PYTHON_FIX
+            if [ $? -eq 0 ]; then
+                echo -e "${green}JSON格式已修复${plain}"
+            else
+                echo -e "${red}JSON格式修复失败，请手动检查配置文件${plain}"
+            fi
+        fi
+    elif command -v python &> /dev/null; then
+        if python -m json.tool /etc/V2bX/config.json > /dev/null 2>&1; then
+            echo -e "${green}JSON格式验证通过${plain}"
+        else
+            echo -e "${red}警告：生成的JSON格式可能有问题，请检查配置文件${plain}"
+        fi
+    else
+        echo -e "${yellow}未找到Python，跳过JSON格式验证${plain}"
+    fi
     
     # 创建 custom_outbound.json 文件
     cat <<EOF > /etc/V2bX/custom_outbound.json
