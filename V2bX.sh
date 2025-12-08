@@ -90,6 +90,31 @@ confirm_restart() {
     fi
 }
 
+# 规范化并校验 API 输入，防止地址和 Key 混在一起
+prompt_api_info() {
+    while true; do
+        read -rp "请输入机场网址(https://example.com)：" ApiHost
+        read -rp "请输入面板对接API Key：" ApiKey
+        # 去除前后空白和回车
+        ApiHost=$(echo -n "$ApiHost" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        ApiKey=$(echo -n "$ApiKey" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        if [[ -z "$ApiHost" || -z "$ApiKey" ]]; then
+            echo -e "${red}错误：机场网址或 API Key 不能为空，请重新输入${plain}"
+            continue
+        fi
+        # 若用户把地址和 Key 粘在一起（含空格），提示重新输入
+        if echo "$ApiHost" | grep -q '[[:space:]]'; then
+            echo -e "${yellow}检测到机场网址中包含空格，可能把地址和 Key 粘在一起了，请分开输入${plain}"
+            continue
+        fi
+        if echo "$ApiKey" | grep -q '[[:space:]]'; then
+            echo -e "${yellow}检测到 API Key 中包含空格，请确保仅输入 Key${plain}"
+            continue
+        fi
+        break
+    done
+}
+
 before_show_menu() {
     echo && echo -n -e "${yellow}按回车返回主菜单: ${plain}" && read temp
     show_menu
@@ -740,8 +765,7 @@ PYTHON_SCRIPT
     
     while true; do
         if [ "$first_node" = true ]; then
-            read -rp "请输入机场网址(https://example.com)：" ApiHost
-            read -rp "请输入面板对接API Key：" ApiKey
+            prompt_api_info
             read -rp "是否设置固定的机场网址和API Key？(y/n)" fixed_api
             if [ "$fixed_api" = "y" ] || [ "$fixed_api" = "Y" ]; then
                 fixed_api_info=true
@@ -754,8 +778,7 @@ PYTHON_SCRIPT
             if [[ "$continue_adding_node" =~ ^[Nn][Oo]? ]]; then
                 break
             elif [ "$fixed_api_info" = false ]; then
-                read -rp "请输入机场网址：" ApiHost
-                read -rp "请输入面板对接API Key：" ApiKey
+                prompt_api_info
             fi
             add_node_config
         fi
