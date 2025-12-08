@@ -550,7 +550,7 @@ add_node_config() {
                     "EnvName": "env1"
                 }
             }
-        },
+        }
 EOF
 )
     elif [ "$core_type" == "2" ]; then
@@ -580,7 +580,7 @@ EOF
                     "EnvName": "env1"
                 }
             }
-        },
+        }
 EOF
 )
     elif [ "$core_type" == "3" ]; then
@@ -609,7 +609,7 @@ EOF
                     "EnvName": "env1"
                 }
             }
-        },
+        }
 EOF
 )
     fi
@@ -649,12 +649,21 @@ try:
     nodes = config.get('Nodes', [])
     if not nodes:
         sys.exit(1)
-    # 先输出节点数量（用于显示）
+    # 输出节点数量
     print(f"NODE_COUNT:{len(nodes)}")
-    # 然后输出格式化的节点 JSON（每个节点多行，带缩进）
-    for node in nodes:
-        # 使用 indent=8 格式化，但我们需要正确计算节点数量
-        print(json.dumps(node, indent=8, ensure_ascii=False))
+    # 输出格式化的节点，自动添加逗号（除了最后一个）
+    for i, node in enumerate(nodes):
+        node_json = json.dumps(node, indent=8, ensure_ascii=False)
+        # 给每行添加8空格缩进（因为在Nodes数组内）
+        lines = node_json.split('\n')
+        indented_lines = ['        ' + line for line in lines]
+        output = '\n'.join(indented_lines)
+        print(output, end='')
+        # 除了最后一个节点，其他都加逗号
+        if i < len(nodes) - 1:
+            print(',')
+        else:
+            print()
     sys.exit(0)
 except Exception as e:
     print(f"Error: {e}", file=sys.stderr)
@@ -663,13 +672,9 @@ PYTHON_SCRIPT
 )
                 exit_code=$?
                 if [ $exit_code -eq 0 ] && [ -n "$result" ]; then
-                    # 提取节点数量（第一行）
                     node_count=$(echo "$result" | head -n 1 | grep "NODE_COUNT:" | cut -d: -f2)
-                    # 提取节点内容（跳过第一行）
                     existing_nodes=$(echo "$result" | tail -n +2)
                     if [ -n "$existing_nodes" ] && [ -n "$node_count" ]; then
-                        # 为每个节点添加逗号（在节点结束的 } 后面），然后移除最后一个节点的逗号
-                        existing_nodes=$(echo "$existing_nodes" | sed 's/^        }$/        },/' | sed -E '$ s/},[[:space:]]*$/}/')
                         echo -e "${green}已读取 $node_count 个现有节点${plain}"
                     else
                         echo -e "${yellow}未找到现有节点，将创建新配置${plain}"
@@ -690,8 +695,16 @@ try:
     if not nodes:
         sys.exit(1)
     print(f"NODE_COUNT:{len(nodes)}")
-    for node in nodes:
-        print(json.dumps(node, indent=8, ensure_ascii=False))
+    for i, node in enumerate(nodes):
+        node_json = json.dumps(node, indent=8, ensure_ascii=False)
+        lines = node_json.split('\n')
+        indented_lines = ['        ' + line for line in lines]
+        output = '\n'.join(indented_lines)
+        print(output, end='')
+        if i < len(nodes) - 1:
+            print(',')
+        else:
+            print()
     sys.exit(0)
 except Exception as e:
     print(f"Error: {e}", file=sys.stderr)
@@ -703,8 +716,6 @@ PYTHON_SCRIPT
                     node_count=$(echo "$result" | head -n 1 | grep "NODE_COUNT:" | cut -d: -f2)
                     existing_nodes=$(echo "$result" | tail -n +2)
                     if [ -n "$existing_nodes" ] && [ -n "$node_count" ]; then
-                        # 为每个节点添加逗号，然后移除最后一个节点的逗号
-                        existing_nodes=$(echo "$existing_nodes" | sed 's/^        }$/        },/' | sed -E '$ s/},[[:space:]]*$/}/')
                         echo -e "${green}已读取 $node_count 个现有节点${plain}"
                     else
                         existing_nodes=""
@@ -809,41 +820,30 @@ PYTHON_SCRIPT
         cp config.json config.json.bak.$(date +%Y%m%d_%H%M%S)
     fi
     
-    # 正确连接节点配置数组，使用换行符分隔
-    # 先移除每个节点配置末尾的逗号，然后重新添加（除了最后一个）
+    # 拼接新节点配置（每个节点间用逗号+换行分隔）
     formatted_nodes_config=""
     node_count=${#nodes_config[@]}
     for i in "${!nodes_config[@]}"; do
-        node="${nodes_config[$i]}"
-        # 移除节点配置末尾的逗号和换行符
-        node=$(echo "$node" | sed 's/,[[:space:]]*$//' | sed 's/[[:space:]]*$//')
-        # 如果不是最后一个节点，添加逗号
+        formatted_nodes_config+="${nodes_config[$i]}"
+        # 除了最后一个节点，其他都加逗号
         if [ $i -lt $((node_count - 1)) ]; then
-            formatted_nodes_config+="$node,
-"
-        else
-            formatted_nodes_config+="$node"
+            formatted_nodes_config+=","
         fi
+        formatted_nodes_config+=$'\n'
     done
     
     # 合并现有节点和新节点
     all_nodes_config=""
     if [ -n "$existing_nodes" ] && [ -n "$formatted_nodes_config" ]; then
-        # 有现有节点和新节点，合并
-        # 移除 existing_nodes 最后一个逗号（精确匹配最后一个 } 后的逗号）
-        existing_nodes_clean=$(echo "$existing_nodes" | sed -E 's/^([[:space:]]*)\}$/\1}/' | sed -E '$ s/},[[:space:]]*$/}/')
-        all_nodes_config="$existing_nodes_clean,
-        $formatted_nodes_config"
+        # 有现有节点 + 有新节点 = 合并（existing_nodes已有逗号）
+        all_nodes_config="${existing_nodes},"$'\n'"${formatted_nodes_config}"
     elif [ -n "$existing_nodes" ]; then
-        # 只有现有节点（移除最后一个逗号）
-        all_nodes_config=$(echo "$existing_nodes" | sed -E 's/^([[:space:]]*)\}$/\1}/' | sed -E '$ s/},[[:space:]]*$/}/')
+        # 只有现有节点（existing_nodes的最后一个节点已经没有逗号）
+        all_nodes_config="$existing_nodes"
     elif [ -n "$formatted_nodes_config" ]; then
         # 只有新节点
         all_nodes_config="$formatted_nodes_config"
     fi
-    
-    # 清理格式（移除空行）
-    all_nodes_config=$(echo "$all_nodes_config" | sed '/^[[:space:]]*$/d')
 
     # 创建 config.json 文件
     cat <<EOF > /etc/V2bX/config.json
@@ -1143,7 +1143,7 @@ show_usage() {
 
 show_menu() {
     echo -e "
-  ${green}V2bX 后端管理脚本 ${plain}${red}不适用于docker${plain}
+  ${green}V2bX 后端管理脚本，${plain}${red}不适用于docker${plain}
 --- https://github.com/JJOGGER/V2bX ---
   ${green}0.${plain} 修改配置
 ————————————————
