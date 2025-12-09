@@ -511,6 +511,8 @@ add_node_config() {
     fastopen=true
     isreality=""
     istls=""
+    certmode="none"
+    certdomain=""
     if [ "$NodeType" == "vless" ]; then
         read -rp "请选择是否为reality节点？(y/n)" isreality
     elif [ "$NodeType" == "hysteria" ] || [ "$NodeType" == "hysteria2" ] || [ "$NodeType" == "tuic" ] || [ "$NodeType" == "anytls" ]; then
@@ -522,8 +524,6 @@ add_node_config() {
         read -rp "请选择是否进行TLS配置？(y/n)" istls
     fi
 
-    certmode="none"
-    certdomain="example.com"
     if [[ "$isreality" != "y" && "$isreality" != "Y" && ( "$istls" == "y" || "$istls" == "Y" ) ]]; then
         echo -e "${yellow}请选择证书申请模式：${plain}"
         echo -e "${green}1. http模式自动申请，节点域名已正确解析${plain}"
@@ -539,6 +539,21 @@ add_node_config() {
         if [ "$certmode" != "http" ]; then
             echo -e "${red}请手动修改配置文件后重启V2bX！${plain}"
         fi
+    elif [[ "$isreality" != "y" && "$isreality" != "Y" ]]; then
+        # 未开启 TLS 时要求填写节点 IP，避免写入 example.com
+        while true; do
+            read -rp "未启用TLS，请填写节点IP：" certdomain
+            certdomain=$(echo -n "$certdomain" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            if [[ -z "$certdomain" ]]; then
+                echo -e "${red}节点IP不能为空，请重新输入${plain}"
+                continue
+            fi
+            if [[ "$certdomain" == "example.com" ]]; then
+                echo -e "${yellow}请填写实际节点IP，不能使用 example.com${plain}"
+                continue
+            fi
+            break
+        done
     fi
     ipv6_support=$(check_ipv6_support)
     listen_ip="0.0.0.0"
