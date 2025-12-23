@@ -90,31 +90,6 @@ confirm_restart() {
     fi
 }
 
-# 规范化并校验 API 输入，防止地址和 Key 混在一起
-prompt_api_info() {
-    while true; do
-        read -rp "请输入机场网址(https://example.com)：" ApiHost
-        read -rp "请输入面板对接API Key：" ApiKey
-        # 去除前后空白和回车
-        ApiHost=$(echo -n "$ApiHost" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        ApiKey=$(echo -n "$ApiKey" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        if [[ -z "$ApiHost" || -z "$ApiKey" ]]; then
-            echo -e "${red}错误：机场网址或 API Key 不能为空，请重新输入${plain}"
-            continue
-        fi
-        # 若用户把地址和 Key 粘在一起（含空格），提示重新输入
-        if echo "$ApiHost" | grep -q '[[:space:]]'; then
-            echo -e "${yellow}检测到机场网址中包含空格，可能把地址和 Key 粘在一起了，请分开输入${plain}"
-            continue
-        fi
-        if echo "$ApiKey" | grep -q '[[:space:]]'; then
-            echo -e "${yellow}检测到 API Key 中包含空格，请确保仅输入 Key${plain}"
-            continue
-        fi
-        break
-    done
-}
-
 before_show_menu() {
     echo && echo -n -e "${yellow}按回车返回主菜单: ${plain}" && read temp
     show_menu
@@ -169,6 +144,150 @@ config() {
         2)
             echo -e "V2bX状态: ${red}未安装${plain}"
     esac
+}
+
+list_nodes() {
+    if [ ! -f "/etc/V2bX/config.json" ]; then
+        echo -e "${red}未找到 /etc/V2bX/config.json 配置文件，请先生成或配置节点${plain}"
+        return 1
+    fi
+
+    if command -v python3 &> /dev/null; then
+        python3 << 'PYTHON_LIST_NODES'
+import json
+import sys
+
+path = "/etc/V2bX/config.json"
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    nodes = config.get("Nodes", [])
+    if not nodes:
+        print("当前配置中未找到任何节点。")
+        sys.exit(0)
+    print("当前已配置的节点列表：")
+    for idx, node in enumerate(nodes):
+        core = node.get("Core", "")
+        node_type = node.get("NodeType", "")
+        node_id = node.get("NodeID", "")
+        api_host = node.get("ApiHost", "")
+        print(f"[索引 {idx}] Core={core}, NodeType={node_type}, NodeID={node_id}, ApiHost={api_host}")
+except Exception as e:
+    print(f"读取节点列表失败: {e}")
+PYTHON_LIST_NODES
+    elif command -v python &> /dev/null; then
+        python << 'PYTHON_LIST_NODES'
+import json
+import sys
+
+path = "/etc/V2bX/config.json"
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    nodes = config.get("Nodes", [])
+    if not nodes:
+        print("当前配置中未找到任何节点。")
+        sys.exit(0)
+    print("当前已配置的节点列表：")
+    for idx, node in enumerate(nodes):
+        core = node.get("Core", "")
+        node_type = node.get("NodeType", "")
+        node_id = node.get("NodeID", "")
+        api_host = node.get("ApiHost", "")
+        print(f"[索引 {idx}] Core={core}, NodeType={node_type}, NodeID={node_id}, ApiHost={api_host}")
+except Exception as e:
+    print(f"读取节点列表失败: {e}")
+PYTHON_LIST_NODES
+    else
+        echo -e "${red}未找到 Python，无法列出节点信息，请手动编辑 /etc/V2bX/config.json${plain}"
+        return 1
+    fi
+}
+
+edit_node_id() {
+    echo "此功能用于修改已存在节点的 NodeID（面板中的节点编号），不会修改其他配置字段。"
+    if [ ! -f "/etc/V2bX/config.json" ]; then
+        echo -e "${red}未找到 /etc/V2bX/config.json 配置文件，请先生成或配置节点${plain}"
+        return 1
+    fi
+
+    list_nodes
+    echo ""
+    read -rp "请输入要修改的节点索引（上方列表中的索引数字）: " node_index
+    if ! [[ "$node_index" =~ ^[0-9]+$ ]]; then
+        echo -e "${red}索引必须为非负整数${plain}"
+        return 1
+    fi
+
+    read -rp "请输入新的 NodeID（面板中的节点ID，必须为正整数）: " new_node_id
+    if ! [[ "$new_node_id" =~ ^[1-9][0-9]*$ ]]; then
+        echo -e "${red}NodeID 必须为正整数${plain}"
+        return 1
+    fi
+
+    if command -v python3 &> /dev/null; then
+        python3 << PYTHON_EDIT_NODE
+import json
+import sys
+
+path = "/etc/V2bX/config.json"
+idx = int("$node_index")
+new_id = int("$new_node_id")
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    nodes = config.get("Nodes", [])
+    if idx < 0 or idx >= len(nodes):
+        print("节点索引超出范围，请检查后重试。")
+        sys.exit(1)
+    old_id = nodes[idx].get("NodeID")
+    nodes[idx]["NodeID"] = new_id
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
+    print(f"已将索引 {idx} 节点的 NodeID 从 {old_id} 修改为 {new_id}")
+except Exception as e:
+    print(f"修改节点失败: {e}")
+    sys.exit(1)
+PYTHON_EDIT_NODE
+        result=$?
+    elif command -v python &> /dev/null; then
+        python << PYTHON_EDIT_NODE
+import json
+import sys
+
+path = "/etc/V2bX/config.json"
+idx = int("$node_index")
+new_id = int("$new_node_id")
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    nodes = config.get("Nodes", [])
+    if idx < 0 or idx >= len(nodes):
+        print("节点索引超出范围，请检查后重试。")
+        sys.exit(1)
+    old_id = nodes[idx].get("NodeID")
+    nodes[idx]["NodeID"] = new_id
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
+    print(f"已将索引 {idx} 节点的 NodeID 从 {old_id} 修改为 {new_id}")
+except Exception as e:
+    print(f"修改节点失败: {e}")
+    sys.exit(1)
+PYTHON_EDIT_NODE
+        result=$?
+    else
+        echo -e "${red}未找到 Python，无法修改节点配置，请手动编辑 /etc/V2bX/config.json${plain}"
+        return 1
+    fi
+
+    if [ "$result" -eq 0 ]; then
+        echo -e "${green}节点 NodeID 修改完成，正在重启 V2bX 使配置生效${plain}"
+        restart
+    else
+        echo -e "${red}节点 NodeID 修改失败，请检查上方错误信息${plain}"
+    fi
 }
 
 uninstall() {
@@ -511,8 +630,6 @@ add_node_config() {
     fastopen=true
     isreality=""
     istls=""
-    certmode="none"
-    certdomain=""
     if [ "$NodeType" == "vless" ]; then
         read -rp "请选择是否为reality节点？(y/n)" isreality
     elif [ "$NodeType" == "hysteria" ] || [ "$NodeType" == "hysteria2" ] || [ "$NodeType" == "tuic" ] || [ "$NodeType" == "anytls" ]; then
@@ -524,6 +641,8 @@ add_node_config() {
         read -rp "请选择是否进行TLS配置？(y/n)" istls
     fi
 
+    certmode="none"
+    certdomain="example.com"
     if [[ "$isreality" != "y" && "$isreality" != "Y" && ( "$istls" == "y" || "$istls" == "Y" ) ]]; then
         echo -e "${yellow}请选择证书申请模式：${plain}"
         echo -e "${green}1. http模式自动申请，节点域名已正确解析${plain}"
@@ -539,21 +658,6 @@ add_node_config() {
         if [ "$certmode" != "http" ]; then
             echo -e "${red}请手动修改配置文件后重启V2bX！${plain}"
         fi
-    elif [[ "$isreality" != "y" && "$isreality" != "Y" ]]; then
-        # 未开启 TLS 时要求填写节点 IP，避免写入 example.com
-        while true; do
-            read -rp "未启用TLS，请填写节点IP：" certdomain
-            certdomain=$(echo -n "$certdomain" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            if [[ -z "$certdomain" ]]; then
-                echo -e "${red}节点IP不能为空，请重新输入${plain}"
-                continue
-            fi
-            if [[ "$certdomain" == "example.com" ]]; then
-                echo -e "${yellow}请填写实际节点IP，不能使用 example.com${plain}"
-                continue
-            fi
-            break
-        done
     fi
     ipv6_support=$(check_ipv6_support)
     listen_ip="0.0.0.0"
@@ -780,7 +884,8 @@ PYTHON_SCRIPT
     
     while true; do
         if [ "$first_node" = true ]; then
-            prompt_api_info
+            read -rp "请输入机场网址(https://example.com)：" ApiHost
+            read -rp "请输入面板对接API Key：" ApiKey
             read -rp "是否设置固定的机场网址和API Key？(y/n)" fixed_api
             if [ "$fixed_api" = "y" ] || [ "$fixed_api" = "Y" ]; then
                 fixed_api_info=true
@@ -793,7 +898,8 @@ PYTHON_SCRIPT
             if [[ "$continue_adding_node" =~ ^[Nn][Oo]? ]]; then
                 break
             elif [ "$fixed_api_info" = false ]; then
-                prompt_api_info
+                read -rp "请输入机场网址：" ApiHost
+                read -rp "请输入面板对接API Key：" ApiKey
             fi
             add_node_config
         fi
@@ -1171,6 +1277,7 @@ show_usage() {
     echo "V2bX log          - 查看 V2bX 日志"
     echo "V2bX x25519       - 生成 x25519 密钥"
     echo "V2bX generate     - 生成 V2bX 配置文件"
+    echo "V2bX editnode     - 修改已存在节点的 NodeID"
     echo "V2bX update       - 更新 V2bX"
     echo "V2bX update x.x.x - 安装 V2bX 指定版本"
     echo "V2bX install      - 安装 V2bX"
@@ -1204,11 +1311,12 @@ show_menu() {
   ${green}14.${plain} 升级 V2bX 维护脚本
   ${green}15.${plain} 生成 V2bX 配置文件
   ${green}16.${plain} 放行 VPS 的所有网络端口
-  ${green}17.${plain} 退出脚本
+  ${green}17.${plain} 修改已存在节点的 NodeID
+  ${green}18.${plain} 退出脚本
  "
  #后续更新可加入上方字符串中
     show_status
-    echo && read -rp "请输入选择 [0-17]: " num
+    echo && read -rp "请输入选择 [0-18]: " num
 
     case "${num}" in
         0) config ;;
@@ -1228,8 +1336,9 @@ show_menu() {
         14) update_shell ;;
         15) generate_config_file ;;
         16) open_ports ;;
-        17) exit ;;
-        *) echo -e "${red}请输入正确的数字 [0-16]${plain}" ;;
+        17) check_install && edit_node_id ;;
+        18) exit ;;
+        *) echo -e "${red}请输入正确的数字 [0-18]${plain}" ;;
     esac
 }
 
@@ -1250,6 +1359,7 @@ if [[ $# > 0 ]]; then
         "uninstall") check_install 0 && uninstall 0 ;;
         "x25519") check_install 0 && generate_x25519_key 0 ;;
         "version") check_install 0 && show_V2bX_version 0 ;;
+        "editnode") check_install 0 && edit_node_id ;;
         "update_shell") update_shell ;;
         *) show_usage
     esac
