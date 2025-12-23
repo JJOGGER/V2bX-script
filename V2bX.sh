@@ -1136,6 +1136,18 @@ PYTHON_SCRIPT
     core_xray=false
     core_sing=false
     core_hysteria2=false
+    # 如果保留了已有节点，根据已存在节点的 Core 类型预置核心标记，避免覆盖原有 Cores
+    if [ -n "$existing_nodes" ]; then
+        if grep -q '"Core": "xray"' /etc/V2bX/config.json 2>/dev/null; then
+            core_xray=true
+        fi
+        if grep -q '"Core": "sing"' /etc/V2bX/config.json 2>/dev/null; then
+            core_sing=true
+        fi
+        if grep -q '"Core": "hysteria2"' /etc/V2bX/config.json 2>/dev/null; then
+            core_hysteria2=true
+        fi
+    fi
     fixed_api_info=false
     check_api=false
     
