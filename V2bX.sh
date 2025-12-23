@@ -290,6 +290,263 @@ PYTHON_EDIT_NODE
     fi
 }
 
+edit_node_full() {
+    echo "此功能用于修改单个节点的完整配置（整段 JSON），适合高级用户精细调整。"
+    if [ ! -f "/etc/V2bX/config.json" ]; then
+        echo -e "${red}未找到 /etc/V2bX/config.json 配置文件，请先生成或配置节点${plain}"
+        return 1
+    fi
+
+    list_nodes
+    echo ""
+    read -rp "请输入要修改的节点索引（上方列表中的索引数字）: " node_index
+    if ! [[ "$node_index" =~ ^[0-9]+$ ]]; then
+        echo -e "${red}索引必须为非负整数${plain}"
+        return 1
+    fi
+
+    tmp_file="/tmp/V2bX_node_${node_index}.json"
+
+    # 导出当前节点配置到临时文件
+    if command -v python3 &> /dev/null; then
+        python3 << PYTHON_DUMP_NODE
+import json
+import sys
+
+path = "/etc/V2bX/config.json"
+idx = int("$node_index")
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    nodes = config.get("Nodes", [])
+    if idx < 0 or idx >= len(nodes):
+        print("节点索引超出范围，请检查后重试。")
+        sys.exit(1)
+    node = nodes[idx]
+    with open("$tmp_file", "w", encoding="utf-8") as f:
+        json.dump(node, f, indent=4, ensure_ascii=False)
+    print(f"已将索引 {idx} 节点配置导出到 $tmp_file")
+except Exception as e:
+    print(f"导出节点失败: {e}")
+    sys.exit(1)
+PYTHON_DUMP_NODE
+        dump_result=$?
+    elif command -v python &> /dev/null; then
+        python << PYTHON_DUMP_NODE
+import json
+import sys
+
+path = "/etc/V2bX/config.json"
+idx = int("$node_index")
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    nodes = config.get("Nodes", [])
+    if idx < 0 or idx >= len(nodes):
+        print("节点索引超出范围，请检查后重试。")
+        sys.exit(1)
+    node = nodes[idx]
+    with open("$tmp_file", "w", encoding="utf-8") as f:
+        json.dump(node, f, indent=4, ensure_ascii=False)
+    print(f"已将索引 {idx} 节点配置导出到 $tmp_file")
+except Exception as e:
+    print(f"导出节点失败: {e}")
+    sys.exit(1)
+PYTHON_DUMP_NODE
+        dump_result=$?
+    else
+        echo -e "${red}未找到 Python，无法导出节点配置，请手动编辑 /etc/V2bX/config.json${plain}"
+        return 1
+    fi
+
+    if [ "$dump_result" -ne 0 ]; then
+        echo -e "${red}导出节点配置失败，请检查上方错误信息${plain}"
+        return 1
+    fi
+
+    echo -e "${yellow}即将使用 vi 打开节点配置文件，请根据需要修改 JSON 内容，保存退出即可生效。${plain}"
+    echo -e "${yellow}文件路径: $tmp_file${plain}"
+    read -rp "按回车继续编辑..." _
+    vi "$tmp_file"
+
+    # 将修改后的节点写回配置文件
+    if command -v python3 &> /dev/null; then
+        python3 << PYTHON_APPLY_NODE
+import json
+import sys
+import os
+
+cfg_path = "/etc/V2bX/config.json"
+idx = int("$node_index")
+tmp_path = "$tmp_file"
+
+try:
+    if not os.path.exists(tmp_path):
+        print("临时节点文件不存在，已取消修改。")
+        sys.exit(1)
+
+    with open(tmp_path, "r", encoding="utf-8") as f:
+        new_node = json.load(f)
+
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    nodes = config.get("Nodes", [])
+    if idx < 0 or idx >= len(nodes):
+        print("节点索引超出范围，请检查后重试。")
+        sys.exit(1)
+
+    nodes[idx] = new_node
+
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
+
+    print(f"已将修改后的节点配置写回索引 {idx}")
+except Exception as e:
+    print(f"应用节点修改失败: {e}")
+    sys.exit(1)
+PYTHON_APPLY_NODE
+        apply_result=$?
+    elif command -v python &> /dev/null; then
+        python << PYTHON_APPLY_NODE
+import json
+import sys
+import os
+
+cfg_path = "/etc/V2bX/config.json"
+idx = int("$node_index")
+tmp_path = "$tmp_file"
+
+try:
+    if not os.path.exists(tmp_path):
+        print("临时节点文件不存在，已取消修改。")
+        sys.exit(1)
+
+    with open(tmp_path, "r", encoding="utf-8") as f:
+        new_node = json.load(f)
+
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    nodes = config.get("Nodes", [])
+    if idx < 0 or idx >= len(nodes):
+        print("节点索引超出范围，请检查后重试。")
+        sys.exit(1)
+
+    nodes[idx] = new_node
+
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
+
+    print(f"已将修改后的节点配置写回索引 {idx}")
+except Exception as e:
+    print(f"应用节点修改失败: {e}")
+    sys.exit(1)
+PYTHON_APPLY_NODE
+        apply_result=$?
+    else
+        echo -e "${red}未找到 Python，无法应用节点修改，请手动编辑 /etc/V2bX/config.json${plain}"
+        return 1
+    fi
+
+    if [ "$apply_result" -eq 0 ]; then
+        echo -e "${green}节点完整配置修改完成，正在重启 V2bX 使配置生效${plain}"
+        restart
+    else
+        echo -e "${red}节点完整配置修改失败，请检查上方错误信息${plain}"
+    fi
+}
+
+delete_node() {
+    echo "此功能用于删除单个节点配置（从 Nodes 数组中移除）。"
+    if [ ! -f "/etc/V2bX/config.json" ]; then
+        echo -e "${red}未找到 /etc/V2bX/config.json 配置文件，请先生成或配置节点${plain}"
+        return 1
+    fi
+
+    list_nodes
+    echo ""
+    read -rp "请输入要删除的节点索引（上方列表中的索引数字）: " node_index
+    if ! [[ "$node_index" =~ ^[0-9]+$ ]]; then
+        echo -e "${red}索引必须为非负整数${plain}"
+        return 1
+    fi
+
+    read -rp "确定要删除该节点配置吗？(y/n): " confirm_del
+    if [[ "$confirm_del" != "y" && "$confirm_del" != "Y" ]]; then
+        echo "已取消删除操作。"
+        return 0
+    fi
+
+    if command -v python3 &> /dev/null; then
+        python3 << PYTHON_DELETE_NODE
+import json
+import sys
+
+path = "/etc/V2bX/config.json"
+idx = int("$node_index")
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    nodes = config.get("Nodes", [])
+    if not nodes:
+        print("当前没有可删除的节点。")
+        sys.exit(1)
+    if idx < 0 or idx >= len(nodes):
+        print("节点索引超出范围，请检查后重试。")
+        sys.exit(1)
+    removed = nodes.pop(idx)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
+    print(f"已删除索引 {idx} 的节点（NodeID={removed.get('NodeID')}, Core={removed.get('Core')}, NodeType={removed.get('NodeType')})")
+except Exception as e:
+    print(f"删除节点失败: {e}")
+    sys.exit(1)
+PYTHON_DELETE_NODE
+        del_result=$?
+    elif command -v python &> /dev/null; then
+        python << PYTHON_DELETE_NODE
+import json
+import sys
+
+path = "/etc/V2bX/config.json"
+idx = int("$node_index")
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    nodes = config.get("Nodes", [])
+    if not nodes:
+        print("当前没有可删除的节点。")
+        sys.exit(1)
+    if idx < 0 or idx >= len(nodes):
+        print("节点索引超出范围，请检查后重试。")
+        sys.exit(1)
+    removed = nodes.pop(idx)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
+    print(f"已删除索引 {idx} 的节点（NodeID={removed.get('NodeID')}, Core={removed.get('Core')}, NodeType={removed.get('NodeType')})")
+except Exception as e:
+    print(f"删除节点失败: {e}")
+    sys.exit(1)
+PYTHON_DELETE_NODE
+        del_result=$?
+    else
+        echo -e "${red}未找到 Python，无法删除节点配置，请手动编辑 /etc/V2bX/config.json${plain}"
+        return 1
+    fi
+
+    if [ "$del_result" -eq 0 ]; then
+        echo -e "${green}节点已删除，正在重启 V2bX 使配置生效${plain}"
+        restart
+    else
+        echo -e "${red}节点删除失败，请检查上方错误信息${plain}"
+    fi
+}
+
 uninstall() {
     confirm "确定要卸载 V2bX 吗?" "n"
     if [[ $? != 0 ]]; then
@@ -1278,6 +1535,8 @@ show_usage() {
     echo "V2bX x25519       - 生成 x25519 密钥"
     echo "V2bX generate     - 生成 V2bX 配置文件"
     echo "V2bX editnode     - 修改已存在节点的 NodeID"
+    echo "V2bX editnodefull - 修改单个节点的完整配置（整段 JSON）"
+    echo "V2bX delnode      - 删除单个节点配置"
     echo "V2bX update       - 更新 V2bX"
     echo "V2bX update x.x.x - 安装 V2bX 指定版本"
     echo "V2bX install      - 安装 V2bX"
@@ -1312,11 +1571,13 @@ show_menu() {
   ${green}15.${plain} 生成 V2bX 配置文件
   ${green}16.${plain} 放行 VPS 的所有网络端口
   ${green}17.${plain} 修改已存在节点的 NodeID
-  ${green}18.${plain} 退出脚本
+  ${green}18.${plain} 修改单个节点的完整配置
+  ${green}19.${plain} 删除单个节点配置
+  ${green}20.${plain} 退出脚本
  "
  #后续更新可加入上方字符串中
     show_status
-    echo && read -rp "请输入选择 [0-18]: " num
+    echo && read -rp "请输入选择 [0-20]: " num
 
     case "${num}" in
         0) config ;;
@@ -1337,8 +1598,10 @@ show_menu() {
         15) generate_config_file ;;
         16) open_ports ;;
         17) check_install && edit_node_id ;;
-        18) exit ;;
-        *) echo -e "${red}请输入正确的数字 [0-18]${plain}" ;;
+        18) check_install && edit_node_full ;;
+        19) check_install && delete_node ;;
+        20) exit ;;
+        *) echo -e "${red}请输入正确的数字 [0-20]${plain}" ;;
     esac
 }
 
@@ -1360,6 +1623,8 @@ if [[ $# > 0 ]]; then
         "x25519") check_install 0 && generate_x25519_key 0 ;;
         "version") check_install 0 && show_V2bX_version 0 ;;
         "editnode") check_install 0 && edit_node_id ;;
+        "editnodefull") check_install 0 && edit_node_full ;;
+        "delnode") check_install 0 && delete_node ;;
         "update_shell") update_shell ;;
         *) show_usage
     esac
