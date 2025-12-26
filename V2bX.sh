@@ -547,6 +547,111 @@ PYTHON_DELETE_NODE
     fi
 }
 
+batch_update_api_host() {
+    echo "此功能用于批量修改所有节点的机场地址（ApiHost），适用于机场域名被墙的情况。"
+    echo -e "${yellow}注意：此操作会修改所有节点的 ApiHost，但不会修改其他配置（如 NodeID、协议类型等）${plain}"
+    if [ ! -f "/etc/V2bX/config.json" ]; then
+        echo -e "${red}未找到 /etc/V2bX/config.json 配置文件，请先生成或配置节点${plain}"
+        return 1
+    fi
+
+    list_nodes
+    echo ""
+    read -rp "请输入新的机场地址（ApiHost，例如：https://new-domain.com）: " new_api_host
+    if [ -z "$new_api_host" ]; then
+        echo -e "${red}机场地址不能为空${plain}"
+        return 1
+    fi
+
+    read -rp "确定要将所有节点的 ApiHost 修改为 '$new_api_host' 吗？(y/n): " confirm_update
+    if [[ "$confirm_update" != "y" && "$confirm_update" != "Y" ]]; then
+        echo "已取消修改操作。"
+        return 0
+    fi
+
+    if command -v python3 &> /dev/null; then
+        python3 << PYTHON_BATCH_UPDATE
+import json
+import sys
+
+path = "/etc/V2bX/config.json"
+new_host = "$new_api_host"
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    nodes = config.get("Nodes", [])
+    if not nodes:
+        print("当前配置中未找到任何节点。")
+        sys.exit(1)
+    
+    updated_count = 0
+    for idx, node in enumerate(nodes):
+        old_host = node.get("ApiHost", "")
+        if old_host != new_host:
+            node["ApiHost"] = new_host
+            updated_count += 1
+            print(f"节点 [索引 {idx}] (NodeID={node.get('NodeID')}): {old_host} -> {new_host}")
+    
+    if updated_count == 0:
+        print("所有节点的 ApiHost 已经是 '$new_host'，无需修改。")
+    else:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
+        print(f"\n已成功更新 {updated_count} 个节点的 ApiHost")
+except Exception as e:
+    print(f"批量更新失败: {e}")
+    sys.exit(1)
+PYTHON_BATCH_UPDATE
+        update_result=$?
+    elif command -v python &> /dev/null; then
+        python << PYTHON_BATCH_UPDATE
+import json
+import sys
+
+path = "/etc/V2bX/config.json"
+new_host = "$new_api_host"
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    nodes = config.get("Nodes", [])
+    if not nodes:
+        print("当前配置中未找到任何节点。")
+        sys.exit(1)
+    
+    updated_count = 0
+    for idx, node in enumerate(nodes):
+        old_host = node.get("ApiHost", "")
+        if old_host != new_host:
+            node["ApiHost"] = new_host
+            updated_count += 1
+            print(f"节点 [索引 {idx}] (NodeID={node.get('NodeID')}): {old_host} -> {new_host}")
+    
+    if updated_count == 0:
+        print("所有节点的 ApiHost 已经是 '$new_host'，无需修改。")
+    else:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
+        print(f"\n已成功更新 {updated_count} 个节点的 ApiHost")
+except Exception as e:
+    print(f"批量更新失败: {e}")
+    sys.exit(1)
+PYTHON_BATCH_UPDATE
+        update_result=$?
+    else
+        echo -e "${red}未找到 Python，无法批量更新节点配置，请手动编辑 /etc/V2bX/config.json${plain}"
+        return 1
+    fi
+
+    if [ "$update_result" -eq 0 ]; then
+        echo -e "${green}批量更新完成，正在重启 V2bX 使配置生效${plain}"
+        restart
+    else
+        echo -e "${red}批量更新失败，请检查上方错误信息${plain}"
+    fi
+}
+
 uninstall() {
     confirm "确定要卸载 V2bX 吗?" "n"
     if [[ $? != 0 ]]; then
@@ -1549,6 +1654,7 @@ show_usage() {
     echo "V2bX editnode     - 修改已存在节点的 NodeID"
     echo "V2bX editnodefull - 修改单个节点的完整配置（整段 JSON）"
     echo "V2bX delnode      - 删除单个节点配置"
+    echo "V2bX updateapihost - 批量修改所有节点的机场地址（ApiHost）"
     echo "V2bX update       - 更新 V2bX"
     echo "V2bX update x.x.x - 安装 V2bX 指定版本"
     echo "V2bX install      - 安装 V2bX"
@@ -1585,11 +1691,12 @@ show_menu() {
   ${green}17.${plain} 修改已存在节点的 NodeID
   ${green}18.${plain} 修改单个节点的完整配置
   ${green}19.${plain} 删除单个节点配置
-  ${green}20.${plain} 退出脚本
+  ${green}20.${plain} 批量修改所有节点的机场地址（ApiHost）
+  ${green}21.${plain} 退出脚本
  "
  #后续更新可加入上方字符串中
     show_status
-    echo && read -rp "请输入选择 [0-20]: " num
+    echo && read -rp "请输入选择 [0-21]: " num
 
     case "${num}" in
         0) config ;;
@@ -1612,8 +1719,9 @@ show_menu() {
         17) check_install && edit_node_id ;;
         18) check_install && edit_node_full ;;
         19) check_install && delete_node ;;
-        20) exit ;;
-        *) echo -e "${red}请输入正确的数字 [0-20]${plain}" ;;
+        20) check_install && batch_update_api_host ;;
+        21) exit ;;
+        *) echo -e "${red}请输入正确的数字 [0-21]${plain}" ;;
     esac
 }
 
@@ -1637,6 +1745,7 @@ if [[ $# > 0 ]]; then
         "editnode") check_install 0 && edit_node_id ;;
         "editnodefull") check_install 0 && edit_node_full ;;
         "delnode") check_install 0 && delete_node ;;
+        "updateapihost") check_install 0 && batch_update_api_host ;;
         "update_shell") update_shell ;;
         *) show_usage
     esac
