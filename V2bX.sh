@@ -3387,6 +3387,334 @@ PYTHON_CHECK_API
     fi
 }
 
+# 检查并修复证书申请错误
+check_cert_errors() {
+    echo -e "${yellow}正在检查证书申请错误...${plain}"
+    echo ""
+    
+    if ! command -v python3 &> /dev/null && ! command -v python &> /dev/null; then
+        echo -e "${red}未找到 Python，无法检查证书错误${plain}"
+        if [[ $# == 0 ]]; then
+            before_show_menu
+        fi
+        return 1
+    fi
+    
+    local node_index=""
+    if [ $# -gt 0 ]; then
+        node_index="$1"
+    fi
+    
+    if command -v python3 &> /dev/null; then
+        python3 << PYTHON_CHECK_CERT
+import json
+import sys
+import subprocess
+import re
+from datetime import datetime
+
+path = "/etc/V2bX/config.json"
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    nodes = config.get("Nodes", [])
+    if not nodes:
+        print("当前配置中未找到任何节点。")
+        sys.exit(1)
+    
+    # 如果指定了节点索引，只检查该节点
+    if "$node_index" and "$node_index".strip():
+        idx = int("$node_index")
+        if idx < 0 or idx >= len(nodes):
+            print("节点索引超出范围，请检查后重试。")
+            sys.exit(1)
+        nodes = [nodes[idx]]
+        print(f"检查节点 [索引 {idx}]:")
+    else:
+        print("检查所有节点:")
+    
+    print("=" * 80)
+    
+    # 检查V2bX日志中的证书错误
+    log_content = ""
+    try:
+        result = subprocess.run(
+            ["journalctl", "-u", "V2bX.service", "--no-pager", "-n", "500"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        log_content = result.stdout
+    except:
+        pass
+    
+    error_nodes = []
+    rate_limit_nodes = []
+    
+    for idx, node in enumerate(nodes):
+        node_id = node.get("NodeID", "")
+        node_type = node.get("NodeType", "")
+        cert_config = node.get("CertConfig", {})
+        cert_mode = cert_config.get("CertMode", "none")
+        cert_domain = cert_config.get("CertDomain", "")
+        
+        print(f"\n节点 [索引 {idx}] (NodeID={node_id}, NodeType={node_type}):")
+        print(f"  证书模式: {cert_mode}")
+        if cert_domain:
+            print(f"  证书域名: {cert_domain}")
+        
+        # 检查日志中的证书错误
+        if log_content and cert_mode in ["http", "dns"]:
+            # 查找该节点的证书错误
+            node_pattern = f"node.*{node_id}|NodeID.*{node_id}"
+            node_logs = [line for line in log_content.split("\n") if re.search(node_pattern, line, re.IGNORECASE)]
+            
+            cert_errors = [line for line in node_logs if "cert" in line.lower() and ("error" in line.lower() or "failed" in line.lower())]
+            
+            if cert_errors:
+                print(f"  ${chr(27)}[33m⚠️  发现证书相关错误${chr(27)}[0m")
+                for err_line in cert_errors[-3:]:  # 显示最近3条错误
+                    if "rateLimited" in err_line or "rate limit" in err_line.lower() or "429" in err_line:
+                        print(f"    ${chr(27)}[31m速率限制错误: Let's Encrypt 证书申请达到限制${chr(27)}[0m")
+                        rate_limit_nodes.append({
+                            "index": idx,
+                            "node_id": node_id,
+                            "node_type": node_type,
+                            "cert_mode": cert_mode,
+                            "cert_domain": cert_domain
+                        })
+                    else:
+                        print(f"    ${chr(27)}[33m{err_line[:100]}${chr(27)}[0m")
+                        error_nodes.append({
+                            "index": idx,
+                            "node_id": node_id,
+                            "node_type": node_type,
+                            "cert_mode": cert_mode,
+                            "cert_domain": cert_domain
+                        })
+        
+        # 检查证书文件是否存在
+        if cert_mode in ["http", "dns"]:
+            cert_file = cert_config.get("CertFile", "/etc/V2bX/fullchain.cer")
+            key_file = cert_config.get("KeyFile", "/etc/V2bX/cert.key")
+            import os
+            if not os.path.exists(cert_file) or not os.path.exists(key_file):
+                print(f"  ${chr(27)}[33m⚠️  证书文件不存在${chr(27)}[0m")
+                print(f"    证书文件: {cert_file}")
+                print(f"    私钥文件: {key_file}")
+    
+    print("\n" + "=" * 80)
+    
+    # 总结
+    if rate_limit_nodes:
+        print(f"\n${chr(27)}[31m发现 {len(rate_limit_nodes)} 个节点遇到 Let's Encrypt 速率限制:${chr(27)}[0m")
+        for node_info in rate_limit_nodes:
+            print(f"  - 节点 [索引 {node_info['index']}] (NodeID={node_info['node_id']}, 域名={node_info['cert_domain']})")
+        print(f"\n${chr(27)}[33m建议:${chr(27)}[0m")
+        print("  1. 等待速率限制解除（通常需要几小时到几天）")
+        print("  2. 将证书模式改为 'self'（自签证书）")
+        print("  3. 将证书模式改为 'none'（不使用证书）")
+        print("  4. 使用其他证书提供商")
+        print(f"\n是否自动修复这些节点？(将证书模式改为 'self')")
+        print("输入 'y' 自动修复，输入 'n' 跳过", end=': ', flush=True)
+        try:
+            choice = input().strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            choice = 'n'
+            print("")
+        if choice == 'y':
+            # 自动修复
+            for node_info in rate_limit_nodes:
+                idx = node_info['index']
+                config['Nodes'][idx]['CertConfig']['CertMode'] = 'self'
+                print(f"  ✓ 已将节点 [索引 {idx}] 的证书模式改为 'self'")
+            
+            # 保存配置
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=4, ensure_ascii=False)
+            print(f"\n${chr(27)}[32m配置已更新，请重启 V2bX 服务${chr(27)}[0m")
+        else:
+            print("已跳过自动修复")
+    
+    if error_nodes and not rate_limit_nodes:
+        print(f"\n${chr(27)}[33m发现 {len(error_nodes)} 个节点有证书相关错误${chr(27)}[0m")
+        print("请检查日志以获取详细信息")
+    
+    if not rate_limit_nodes and not error_nodes:
+        print(f"\n${chr(27)}[32m✓ 未发现证书申请错误${chr(27)}[0m")
+    
+    sys.exit(0)
+except Exception as e:
+    print(f"检查失败: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+PYTHON_CHECK_CERT
+        check_result=$?
+    elif command -v python &> /dev/null; then
+        python << PYTHON_CHECK_CERT
+import json
+import sys
+import subprocess
+import re
+from datetime import datetime
+
+path = "/etc/V2bX/config.json"
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    nodes = config.get("Nodes", [])
+    if not nodes:
+        print("当前配置中未找到任何节点。")
+        sys.exit(1)
+    
+    # 如果指定了节点索引，只检查该节点
+    if "$node_index" and "$node_index".strip():
+        idx = int("$node_index")
+        if idx < 0 or idx >= len(nodes):
+            print("节点索引超出范围，请检查后重试。")
+            sys.exit(1)
+        nodes = [nodes[idx]]
+        print(f"检查节点 [索引 {idx}]:")
+    else:
+        print("检查所有节点:")
+    
+    print("=" * 80)
+    
+    # 检查V2bX日志中的证书错误
+    log_content = ""
+    try:
+        result = subprocess.run(
+            ["journalctl", "-u", "V2bX.service", "--no-pager", "-n", "500"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        log_content = result.stdout
+    except:
+        pass
+    
+    error_nodes = []
+    rate_limit_nodes = []
+    
+    for idx, node in enumerate(nodes):
+        node_id = node.get("NodeID", "")
+        node_type = node.get("NodeType", "")
+        cert_config = node.get("CertConfig", {})
+        cert_mode = cert_config.get("CertMode", "none")
+        cert_domain = cert_config.get("CertDomain", "")
+        
+        print(f"\n节点 [索引 {idx}] (NodeID={node_id}, NodeType={node_type}):")
+        print(f"  证书模式: {cert_mode}")
+        if cert_domain:
+            print(f"  证书域名: {cert_domain}")
+        
+        # 检查日志中的证书错误
+        if log_content and cert_mode in ["http", "dns"]:
+            # 查找该节点的证书错误
+            node_pattern = f"node.*{node_id}|NodeID.*{node_id}"
+            node_logs = [line for line in log_content.split("\n") if re.search(node_pattern, line, re.IGNORECASE)]
+            
+            cert_errors = [line for line in node_logs if "cert" in line.lower() and ("error" in line.lower() or "failed" in line.lower())]
+            
+            if cert_errors:
+                print(f"  ${chr(27)}[33m⚠️  发现证书相关错误${chr(27)}[0m")
+                for err_line in cert_errors[-3:]:  # 显示最近3条错误
+                    if "rateLimited" in err_line or "rate limit" in err_line.lower() or "429" in err_line:
+                        print(f"    ${chr(27)}[31m速率限制错误: Let's Encrypt 证书申请达到限制${chr(27)}[0m")
+                        rate_limit_nodes.append({
+                            "index": idx,
+                            "node_id": node_id,
+                            "node_type": node_type,
+                            "cert_mode": cert_mode,
+                            "cert_domain": cert_domain
+                        })
+                    else:
+                        print(f"    ${chr(27)}[33m{err_line[:100]}${chr(27)}[0m")
+                        error_nodes.append({
+                            "index": idx,
+                            "node_id": node_id,
+                            "node_type": node_type,
+                            "cert_mode": cert_mode,
+                            "cert_domain": cert_domain
+                        })
+        
+        # 检查证书文件是否存在
+        if cert_mode in ["http", "dns"]:
+            cert_file = cert_config.get("CertFile", "/etc/V2bX/fullchain.cer")
+            key_file = cert_config.get("KeyFile", "/etc/V2bX/cert.key")
+            import os
+            if not os.path.exists(cert_file) or not os.path.exists(key_file):
+                print(f"  ${chr(27)}[33m⚠️  证书文件不存在${chr(27)}[0m")
+                print(f"    证书文件: {cert_file}")
+                print(f"    私钥文件: {key_file}")
+    
+    print("\n" + "=" * 80)
+    
+    # 总结
+    if rate_limit_nodes:
+        print(f"\n${chr(27)}[31m发现 {len(rate_limit_nodes)} 个节点遇到 Let's Encrypt 速率限制:${chr(27)}[0m")
+        for node_info in rate_limit_nodes:
+            print(f"  - 节点 [索引 {node_info['index']}] (NodeID={node_info['node_id']}, 域名={node_info['cert_domain']})")
+        print(f"\n${chr(27)}[33m建议:${chr(27)}[0m")
+        print("  1. 等待速率限制解除（通常需要几小时到几天）")
+        print("  2. 将证书模式改为 'self'（自签证书）")
+        print("  3. 将证书模式改为 'none'（不使用证书）")
+        print("  4. 使用其他证书提供商")
+        print(f"\n是否自动修复这些节点？(将证书模式改为 'self')")
+        print("输入 'y' 自动修复，输入 'n' 跳过", end=': ', flush=True)
+        try:
+            choice = input().strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            choice = 'n'
+            print("")
+        if choice == 'y':
+            # 自动修复
+            for node_info in rate_limit_nodes:
+                idx = node_info['index']
+                config['Nodes'][idx]['CertConfig']['CertMode'] = 'self'
+                print(f"  ✓ 已将节点 [索引 {idx}] 的证书模式改为 'self'")
+            
+            # 保存配置
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=4, ensure_ascii=False)
+            print(f"\n${chr(27)}[32m配置已更新，请重启 V2bX 服务${chr(27)}[0m")
+        else:
+            print("已跳过自动修复")
+    
+    if error_nodes and not rate_limit_nodes:
+        print(f"\n${chr(27)}[33m发现 {len(error_nodes)} 个节点有证书相关错误${chr(27)}[0m")
+        print("请检查日志以获取详细信息")
+    
+    if not rate_limit_nodes and not error_nodes:
+        print(f"\n${chr(27)}[32m✓ 未发现证书申请错误${chr(27)}[0m")
+    
+    sys.exit(0)
+except Exception as e:
+    print(f"检查失败: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+PYTHON_CHECK_CERT
+        check_result=$?
+    else
+        echo -e "${red}未找到 Python，无法检查证书错误${plain}"
+        return 1
+    fi
+    
+    if [ "$check_result" -eq 0 ]; then
+        echo ""
+    else
+        echo -e "${red}检查失败，请检查上方错误信息${plain}"
+    fi
+    
+    if [[ $# == 0 ]]; then
+        before_show_menu
+    fi
+}
+
 uninstall() {
     confirm "确定要卸载 V2bX 吗?" "n"
     if [[ $? != 0 ]]; then
@@ -4519,6 +4847,7 @@ show_usage() {
     echo "V2bX updateapihost - 批量修改所有节点的机场地址（ApiHost）"
     echo "V2bX updatebackupdomains - 更新备用域名列表"
     echo "V2bX checkapifrequency - 检查API请求频率和优化建议"
+    echo "V2bX checkcerterrors - 检查并修复证书申请错误"
     echo "V2bX update       - 更新 V2bX"
     echo "V2bX update x.x.x - 安装 V2bX 指定版本"
     echo "V2bX install      - 安装 V2bX"
@@ -4558,11 +4887,12 @@ show_menu() {
   ${green}20.${plain} 批量修改所有节点的机场地址（ApiHost）
   ${green}21.${plain} 更新备用域名列表
   ${green}22.${plain} 检查API请求频率和优化建议
-  ${green}23.${plain} 退出脚本
+  ${green}23.${plain} 检查并修复证书申请错误
+  ${green}24.${plain} 退出脚本
  "
  #后续更新可加入上方字符串中
     show_status
-    echo && read -rp "请输入选择 [0-23]: " num
+    echo && read -rp "请输入选择 [0-24]: " num
 
     case "${num}" in
         0) config ;;
@@ -4588,8 +4918,9 @@ show_menu() {
         20) check_install && batch_update_api_host ;;
         21) update_backup_domains ;;
         22) check_install && check_api_frequency ;;
-        23) exit ;;
-        *) echo -e "${red}请输入正确的数字 [0-23]${plain}" ;;
+        23) check_install && check_cert_errors ;;
+        24) exit ;;
+        *) echo -e "${red}请输入正确的数字 [0-24]${plain}" ;;
     esac
 }
 
@@ -4616,6 +4947,7 @@ if [[ $# > 0 ]]; then
         "updateapihost") check_install 0 && batch_update_api_host ;;
         "updatebackupdomains") update_backup_domains ;;
         "checkapifrequency") check_install 0 && check_api_frequency ;;
+        "checkcerterrors") check_install 0 && check_cert_errors ;;
         "update_shell") update_shell ;;
         *) show_usage
     esac
