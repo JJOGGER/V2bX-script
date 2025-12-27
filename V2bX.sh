@@ -2216,11 +2216,14 @@ PYTHON_READ_NODE
     # 测试API地址是否可用，如果不可用则尝试备用域名
     echo -e "${yellow}正在测试API地址可用性...${plain}"
     available_host=$(find_available_api_host "$ApiHost" "$ApiKey" "$NodeID" "$current_nodetype")
-    if [ $? -eq 0 ] && [ "$available_host" != "$ApiHost" ]; then
-        echo -e "${yellow}原API地址不可用，已自动切换到: $available_host${plain}"
-        ApiHost="$available_host"
-    elif [ $? -eq 0 ]; then
-        echo -e "${green}API地址可用${plain}"
+    test_result=$?
+    if [ $test_result -eq 0 ] && [ -n "$available_host" ]; then
+        if [ "$available_host" != "$ApiHost" ]; then
+            echo -e "${yellow}原API地址不可用，已自动切换到: $available_host${plain}"
+            ApiHost="$available_host"
+        else
+            echo -e "${green}API地址可用${plain}"
+        fi
     else
         echo -e "${yellow}无法测试API地址，将使用输入的地址${plain}"
     fi
@@ -2814,15 +2817,19 @@ test_api_host() {
     
     # 使用curl测试
     if command -v curl &> /dev/null; then
-        http_code=$(curl -s -o /dev/null -w "%{http_code}" -m 5 "$test_url" 2>/dev/null)
-        if [ "$http_code" = "200" ] || [ "$http_code" = "304" ]; then
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" -m 10 --connect-timeout 5 "$test_url" 2>/dev/null)
+        if [ -n "$http_code" ] && ([ "$http_code" = "200" ] || [ "$http_code" = "304" ] || [ "$http_code" = "401" ] || [ "$http_code" = "403" ]); then
+            # 200/304表示成功，401/403表示API地址可达但认证失败（也算地址可用）
             return 0
         fi
     elif command -v wget &> /dev/null; then
-        http_code=$(wget --spider -S "$test_url" 2>&1 | grep -E "HTTP/" | tail -1 | awk '{print $2}')
-        if [ "$http_code" = "200" ] || [ "$http_code" = "304" ]; then
+        http_code=$(wget --spider -S --timeout=10 "$test_url" 2>&1 | grep -E "HTTP/" | tail -1 | awk '{print $2}')
+        if [ -n "$http_code" ] && ([ "$http_code" = "200" ] || [ "$http_code" = "304" ] || [ "$http_code" = "401" ] || [ "$http_code" = "403" ]); then
             return 0
         fi
+    else
+        # 如果没有curl或wget，无法测试，返回1
+        return 1
     fi
     
     return 1
@@ -3707,11 +3714,14 @@ add_node_config() {
     # 测试API地址是否可用，如果不可用则尝试备用域名
     echo -e "${yellow}正在测试API地址可用性...${plain}"
     available_host=$(find_available_api_host "$ApiHost" "$ApiKey" "$NodeID" "$NodeType")
-    if [ $? -eq 0 ] && [ "$available_host" != "$ApiHost" ]; then
-        echo -e "${yellow}原API地址不可用，已自动切换到: $available_host${plain}"
-        ApiHost="$available_host"
-    elif [ $? -eq 0 ]; then
-        echo -e "${green}API地址可用${plain}"
+    test_result=$?
+    if [ $test_result -eq 0 ] && [ -n "$available_host" ]; then
+        if [ "$available_host" != "$ApiHost" ]; then
+            echo -e "${yellow}原API地址不可用，已自动切换到: $available_host${plain}"
+            ApiHost="$available_host"
+        else
+            echo -e "${green}API地址可用${plain}"
+        fi
     else
         echo -e "${yellow}无法测试API地址，将使用输入的地址${plain}"
     fi
