@@ -1005,6 +1005,13 @@ add_node_config() {
 
     certmode="none"
     certdomain="example.com"
+    # 检查是否有固定的证书域名
+    fixed_cert_domain=$(read_fixed_cert_domain 2>/dev/null)
+    if [ $? -eq 0 ] && [ -n "$fixed_cert_domain" ]; then
+        certdomain="$fixed_cert_domain"
+        echo -e "${green}使用固定的证书域名: $certdomain${plain}"
+    fi
+    
     if [[ "$isreality" != "y" && "$isreality" != "Y" && ( "$istls" == "y" || "$istls" == "Y" ) ]]; then
         echo -e "${yellow}请选择证书申请模式：${plain}"
         echo -e "${green}1. http模式自动申请，节点域名已正确解析${plain}"
@@ -1016,7 +1023,25 @@ add_node_config() {
             2 ) certmode="dns" ;;
             3 ) certmode="self" ;;
         esac
-        read -rp "请输入节点证书域名(example.com)：" certdomain
+        if [ -z "$fixed_cert_domain" ] || [ "$fixed_cert_domain" = "" ]; then
+            read -rp "请输入节点证书域名(example.com)：" certdomain
+            if [ -z "$certdomain" ]; then
+                certdomain="example.com"
+            fi
+        else
+            read -rp "请输入节点证书域名(当前固定: $certdomain，直接回车使用固定域名): " input_certdomain
+            if [ -n "$input_certdomain" ]; then
+                certdomain="$input_certdomain"
+            fi
+        fi
+        # 询问是否固定证书域名
+        if [ -z "$fixed_cert_domain" ] || [ "$fixed_cert_domain" = "" ]; then
+            read -rp "是否固定此证书域名，下次添加节点时自动使用？(y/n，默认n): " fix_cert_domain
+            if [ "$fix_cert_domain" = "y" ] || [ "$fix_cert_domain" = "Y" ]; then
+                save_fixed_cert_domain "$certdomain"
+                echo -e "${green}已固定证书域名: $certdomain${plain}"
+            fi
+        fi
         if [ "$certmode" != "http" ]; then
             echo -e "${red}请手动修改配置文件后重启V2bX！${plain}"
         fi
@@ -2295,6 +2320,13 @@ PYTHON_READ_NODE
 
     certmode="none"
     certdomain="example.com"
+    # 检查是否有固定的证书域名
+    fixed_cert_domain=$(read_fixed_cert_domain 2>/dev/null)
+    if [ $? -eq 0 ] && [ -n "$fixed_cert_domain" ]; then
+        certdomain="$fixed_cert_domain"
+        echo -e "${green}使用固定的证书域名: $certdomain${plain}"
+    fi
+    
     if [[ "$isreality" != "y" && "$isreality" != "Y" && ( "$istls" == "y" || "$istls" == "Y" ) ]]; then
         echo -e "${yellow}请选择证书申请模式：${plain}"
         echo -e "${green}1. http模式自动申请，节点域名已正确解析${plain}"
@@ -2306,9 +2338,24 @@ PYTHON_READ_NODE
             2 ) certmode="dns" ;;
             3 ) certmode="self" ;;
         esac
-        read -rp "请输入节点证书域名(example.com): " certdomain
-        if [ -z "$certdomain" ]; then
-            certdomain="example.com"
+        if [ -z "$fixed_cert_domain" ] || [ "$fixed_cert_domain" = "" ]; then
+            read -rp "请输入节点证书域名(example.com): " certdomain
+            if [ -z "$certdomain" ]; then
+                certdomain="example.com"
+            fi
+        else
+            read -rp "请输入节点证书域名(当前固定: $certdomain，直接回车使用固定域名): " input_certdomain
+            if [ -n "$input_certdomain" ]; then
+                certdomain="$input_certdomain"
+            fi
+        fi
+        # 询问是否固定证书域名
+        if [ -z "$fixed_cert_domain" ] || [ "$fixed_cert_domain" = "" ]; then
+            read -rp "是否固定此证书域名，下次添加节点时自动使用？(y/n，默认n): " fix_cert_domain
+            if [ "$fix_cert_domain" = "y" ] || [ "$fix_cert_domain" = "Y" ]; then
+                save_fixed_cert_domain "$certdomain"
+                echo -e "${green}已固定证书域名: $certdomain${plain}"
+            fi
         fi
     fi
 
@@ -2582,6 +2629,7 @@ PYTHON_DELETE_NODE
 # 备用域名列表文件路径
 BACKUP_DOMAINS_FILE="/etc/V2bX/backup_domains.json"
 FIXED_API_FILE="/etc/V2bX/fixed_api.json"
+FIXED_CERT_DOMAIN_FILE="/etc/V2bX/fixed_cert_domain.json"
 
 # 更新备用域名列表
 update_backup_domains() {
@@ -2818,21 +2866,27 @@ test_api_host() {
     # 使用curl测试
     if command -v curl &> /dev/null; then
         http_code=$(curl -s -o /dev/null -w "%{http_code}" -m 10 --connect-timeout 5 "$test_url" 2>/dev/null)
+        curl_error=$?
+        if [ $curl_error -ne 0 ]; then
+            # curl执行失败，可能是网络问题或URL格式问题
+            return 1
+        fi
         if [ -n "$http_code" ] && ([ "$http_code" = "200" ] || [ "$http_code" = "304" ] || [ "$http_code" = "401" ] || [ "$http_code" = "403" ]); then
             # 200/304表示成功，401/403表示API地址可达但认证失败（也算地址可用）
             return 0
         fi
+        # 其他HTTP状态码，返回1
+        return 1
     elif command -v wget &> /dev/null; then
         http_code=$(wget --spider -S --timeout=10 "$test_url" 2>&1 | grep -E "HTTP/" | tail -1 | awk '{print $2}')
         if [ -n "$http_code" ] && ([ "$http_code" = "200" ] || [ "$http_code" = "304" ] || [ "$http_code" = "401" ] || [ "$http_code" = "403" ]); then
             return 0
         fi
+        return 1
     else
         # 如果没有curl或wget，无法测试，返回1
         return 1
     fi
-    
-    return 1
 }
 
 # 从备用域名列表中找到可用的API地址
@@ -2953,6 +3007,88 @@ try:
 except Exception as e:
     sys.exit(1)
 PYTHON_READ_FIXED_API
+    else
+        return 1
+    fi
+}
+
+# 保存固定的证书域名
+save_fixed_cert_domain() {
+    local cert_domain=$1
+    
+    if command -v python3 &> /dev/null; then
+        python3 << PYTHON_SAVE_FIXED_CERT
+import json
+import sys
+
+cert_domain = "$cert_domain"
+
+try:
+    data = {
+        "CertDomain": cert_domain,
+        "saved_time": __import__("datetime").datetime.now().isoformat()
+    }
+    with open("$FIXED_CERT_DOMAIN_FILE", "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+    sys.exit(0)
+except Exception as e:
+    print(f"保存失败: {e}", file=sys.stderr)
+    sys.exit(1)
+PYTHON_SAVE_FIXED_CERT
+    elif command -v python &> /dev/null; then
+        python << PYTHON_SAVE_FIXED_CERT
+import json
+import sys
+
+cert_domain = "$cert_domain"
+
+try:
+    data = {
+        "CertDomain": cert_domain,
+        "saved_time": __import__("datetime").datetime.now().isoformat()
+    }
+    with open("$FIXED_CERT_DOMAIN_FILE", "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+    sys.exit(0)
+except Exception as e:
+    print(f"保存失败: {e}", file=sys.stderr)
+    sys.exit(1)
+PYTHON_SAVE_FIXED_CERT
+    fi
+}
+
+# 读取固定的证书域名
+read_fixed_cert_domain() {
+    if [ ! -f "$FIXED_CERT_DOMAIN_FILE" ]; then
+        return 1
+    fi
+    
+    if command -v python3 &> /dev/null; then
+        python3 << PYTHON_READ_FIXED_CERT
+import json
+import sys
+
+try:
+    with open("$FIXED_CERT_DOMAIN_FILE", "r", encoding="utf-8") as f:
+        data = json.load(f)
+    print(data.get("CertDomain", ""))
+    sys.exit(0)
+except Exception as e:
+    sys.exit(1)
+PYTHON_READ_FIXED_CERT
+    elif command -v python &> /dev/null; then
+        python << PYTHON_READ_FIXED_CERT
+import json
+import sys
+
+try:
+    with open("$FIXED_CERT_DOMAIN_FILE", "r", encoding="utf-8") as f:
+        data = json.load(f)
+    print(data.get("CertDomain", ""))
+    sys.exit(0)
+except Exception as e:
+    sys.exit(1)
+PYTHON_READ_FIXED_CERT
     else
         return 1
     fi
@@ -3695,6 +3831,13 @@ add_node_config() {
 
     certmode="none"
     certdomain="example.com"
+    # 检查是否有固定的证书域名
+    fixed_cert_domain=$(read_fixed_cert_domain 2>/dev/null)
+    if [ $? -eq 0 ] && [ -n "$fixed_cert_domain" ]; then
+        certdomain="$fixed_cert_domain"
+        echo -e "${green}使用固定的证书域名: $certdomain${plain}"
+    fi
+    
     if [[ "$isreality" != "y" && "$isreality" != "Y" && ( "$istls" == "y" || "$istls" == "Y" ) ]]; then
         echo -e "${yellow}请选择证书申请模式：${plain}"
         echo -e "${green}1. http模式自动申请，节点域名已正确解析${plain}"
@@ -3706,24 +3849,47 @@ add_node_config() {
             2 ) certmode="dns" ;;
             3 ) certmode="self" ;;
         esac
-        read -rp "请输入节点证书域名(example.com)：" certdomain
+        if [ -z "$fixed_cert_domain" ] || [ "$fixed_cert_domain" = "" ]; then
+            read -rp "请输入节点证书域名(example.com)：" certdomain
+            if [ -z "$certdomain" ]; then
+                certdomain="example.com"
+            fi
+        else
+            read -rp "请输入节点证书域名(当前固定: $certdomain，直接回车使用固定域名): " input_certdomain
+            if [ -n "$input_certdomain" ]; then
+                certdomain="$input_certdomain"
+            fi
+        fi
+        # 询问是否固定证书域名
+        if [ -z "$fixed_cert_domain" ] || [ "$fixed_cert_domain" = "" ]; then
+            read -rp "是否固定此证书域名，下次添加节点时自动使用？(y/n，默认n): " fix_cert_domain
+            if [ "$fix_cert_domain" = "y" ] || [ "$fix_cert_domain" = "Y" ]; then
+                save_fixed_cert_domain "$certdomain"
+                echo -e "${green}已固定证书域名: $certdomain${plain}"
+            fi
+        fi
         if [ "$certmode" != "http" ]; then
             echo -e "${red}请手动修改配置文件后重启V2bX！${plain}"
         fi
     fi
     # 测试API地址是否可用，如果不可用则尝试备用域名
     echo -e "${yellow}正在测试API地址可用性...${plain}"
-    available_host=$(find_available_api_host "$ApiHost" "$ApiKey" "$NodeID" "$NodeType")
-    test_result=$?
-    if [ $test_result -eq 0 ] && [ -n "$available_host" ]; then
-        if [ "$available_host" != "$ApiHost" ]; then
-            echo -e "${yellow}原API地址不可用，已自动切换到: $available_host${plain}"
-            ApiHost="$available_host"
-        else
-            echo -e "${green}API地址可用${plain}"
-        fi
+    if ! command -v curl &> /dev/null && ! command -v wget &> /dev/null; then
+        echo -e "${yellow}未找到 curl 或 wget，跳过API地址测试${plain}"
     else
-        echo -e "${yellow}无法测试API地址，将使用输入的地址${plain}"
+        available_host=$(find_available_api_host "$ApiHost" "$ApiKey" "$NodeID" "$NodeType")
+        test_result=$?
+        if [ $test_result -eq 0 ] && [ -n "$available_host" ]; then
+            if [ "$available_host" != "$ApiHost" ]; then
+                echo -e "${yellow}原API地址不可用，已自动切换到: $available_host${plain}"
+                ApiHost="$available_host"
+            else
+                echo -e "${green}API地址可用${plain}"
+            fi
+        else
+            echo -e "${yellow}无法测试API地址（可能是网络问题或API地址格式不正确），将使用输入的地址${plain}"
+            echo -e "${yellow}提示：如果API地址正确，可以继续配置，V2bX会在运行时自动重试${plain}"
+        fi
     fi
 
     ipv6_support=$(check_ipv6_support)
