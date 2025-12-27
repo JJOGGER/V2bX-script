@@ -3474,25 +3474,33 @@ try:
             
             if cert_errors:
                 print(f"  \033[33m⚠️  发现证书相关错误\033[0m")
+                has_rate_limit = False
+                has_other_error = False
                 for err_line in cert_errors[-3:]:  # 显示最近3条错误
                     if "rateLimited" in err_line or "rate limit" in err_line.lower() or "429" in err_line:
                         print(f"    \033[31m速率限制错误: Let's Encrypt 证书申请达到限制\033[0m")
-                        rate_limit_nodes.append({
-                            "index": idx,
-                            "node_id": node_id,
-                            "node_type": node_type,
-                            "cert_mode": cert_mode,
-                            "cert_domain": cert_domain
-                        })
+                        has_rate_limit = True
                     else:
                         print(f"    \033[33m{err_line[:100]}\033[0m")
-                        error_nodes.append({
-                            "index": idx,
-                            "node_id": node_id,
-                            "node_type": node_type,
-                            "cert_mode": cert_mode,
-                            "cert_domain": cert_domain
-                        })
+                        has_other_error = True
+                
+                # 每个节点只添加一次
+                if has_rate_limit:
+                    rate_limit_nodes.append({
+                        "index": idx,
+                        "node_id": node_id,
+                        "node_type": node_type,
+                        "cert_mode": cert_mode,
+                        "cert_domain": cert_domain
+                    })
+                elif has_other_error:
+                    error_nodes.append({
+                        "index": idx,
+                        "node_id": node_id,
+                        "node_type": node_type,
+                        "cert_mode": cert_mode,
+                        "cert_domain": cert_domain
+                    })
         
         # 检查证书文件是否存在
         if cert_mode in ["http", "dns"]:
@@ -3621,25 +3629,33 @@ try:
             
             if cert_errors:
                 print(f"  \033[33m⚠️  发现证书相关错误\033[0m")
+                has_rate_limit = False
+                has_other_error = False
                 for err_line in cert_errors[-3:]:  # 显示最近3条错误
                     if "rateLimited" in err_line or "rate limit" in err_line.lower() or "429" in err_line:
                         print(f"    \033[31m速率限制错误: Let's Encrypt 证书申请达到限制\033[0m")
-                        rate_limit_nodes.append({
-                            "index": idx,
-                            "node_id": node_id,
-                            "node_type": node_type,
-                            "cert_mode": cert_mode,
-                            "cert_domain": cert_domain
-                        })
+                        has_rate_limit = True
                     else:
                         print(f"    \033[33m{err_line[:100]}\033[0m")
-                        error_nodes.append({
-                            "index": idx,
-                            "node_id": node_id,
-                            "node_type": node_type,
-                            "cert_mode": cert_mode,
-                            "cert_domain": cert_domain
-                        })
+                        has_other_error = True
+                
+                # 每个节点只添加一次
+                if has_rate_limit:
+                    rate_limit_nodes.append({
+                        "index": idx,
+                        "node_id": node_id,
+                        "node_type": node_type,
+                        "cert_mode": cert_mode,
+                        "cert_domain": cert_domain
+                    })
+                elif has_other_error:
+                    error_nodes.append({
+                        "index": idx,
+                        "node_id": node_id,
+                        "node_type": node_type,
+                        "cert_mode": cert_mode,
+                        "cert_domain": cert_domain
+                    })
         
         # 检查证书文件是否存在
         if cert_mode in ["http", "dns"]:
