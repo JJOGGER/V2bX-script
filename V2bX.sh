@@ -3023,6 +3023,7 @@ batch_update_api_host() {
         read -rp "请选择 (1/2，默认2): " select_method
         if [ "$select_method" = "1" ]; then
             echo -e "${yellow}备用域名列表：${plain}"
+            echo -e "${green}  0. 输入新域名（不在列表中）${plain}"
             domain_index=1
             domain_array=()
             while IFS= read -r domain; do
@@ -3032,8 +3033,10 @@ batch_update_api_host() {
                     ((domain_index++))
                 fi
             done <<< "$backup_domains"
-            read -rp "请选择备用域名编号: " selected_index
-            if [[ "$selected_index" =~ ^[0-9]+$ ]] && [ "$selected_index" -ge 1 ] && [ "$selected_index" -le "${#domain_array[@]}" ]; then
+            read -rp "请选择备用域名编号（输入0可输入新域名）: " selected_index
+            if [ "$selected_index" = "0" ]; then
+                read -rp "请输入新的机场地址（ApiHost，例如：https://new-domain.com）: " new_api_host
+            elif [[ "$selected_index" =~ ^[0-9]+$ ]] && [ "$selected_index" -ge 1 ] && [ "$selected_index" -le "${#domain_array[@]}" ]; then
                 new_api_host="${domain_array[$((selected_index-1))]}"
                 echo -e "${green}已选择: $new_api_host${plain}"
             else
