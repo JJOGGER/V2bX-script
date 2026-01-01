@@ -2369,7 +2369,7 @@ EOF
 )
     fi
 
-    # 将新配置写回配置文件
+    # 将新配置写回配置文件，并自动更新 Cores 配置
     if command -v python3 &> /dev/null; then
         python3 << PYTHON_UPDATE_NODE
 import json
@@ -2391,6 +2391,72 @@ try:
         sys.exit(1)
     
     nodes[idx] = new_node
+    
+    # 检查所有节点使用的 Core 类型
+    core_types = set()
+    for node in nodes:
+        node_core = node.get("Core", "")
+        if node_core:
+            core_types.add(node_core)
+    
+    # 获取现有的 Cores 配置
+    existing_cores = config.get("Cores", [])
+    existing_core_types = set()
+    for core in existing_cores:
+        core_type = core.get("Type", "")
+        if core_type:
+            existing_core_types.add(core_type)
+    
+    # 检查是否需要添加新的 Core 配置
+    cores_updated = False
+    new_cores = list(existing_cores)
+    
+    # 检查 xray
+    if "xray" in core_types and "xray" not in existing_core_types:
+        new_cores.append({
+            "Type": "xray",
+            "Log": {
+                "Level": "error",
+                "ErrorPath": "/etc/V2bX/error.log"
+            },
+            "OutboundConfigPath": "/etc/V2bX/custom_outbound.json",
+            "RouteConfigPath": "/etc/V2bX/route.json"
+        })
+        cores_updated = True
+        print("已自动添加 xray Core 配置")
+    
+    # 检查 sing
+    if "sing" in core_types and "sing" not in existing_core_types:
+        new_cores.append({
+            "Type": "sing",
+            "Log": {
+                "Level": "error",
+                "Timestamp": True
+            },
+            "NTP": {
+                "Enable": False,
+                "Server": "time.apple.com",
+                "ServerPort": 0
+            },
+            "OriginalPath": "/etc/V2bX/sing_origin.json"
+        })
+        cores_updated = True
+        print("已自动添加 sing Core 配置")
+    
+    # 检查 hysteria2
+    if "hysteria2" in core_types and "hysteria2" not in existing_core_types:
+        new_cores.append({
+            "Type": "hysteria2",
+            "Log": {
+                "Level": "error"
+            }
+        })
+        cores_updated = True
+        print("已自动添加 hysteria2 Core 配置")
+    
+    # 更新 Cores 配置
+    if cores_updated:
+        config["Cores"] = new_cores
     
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=4, ensure_ascii=False)
@@ -2423,6 +2489,72 @@ try:
         sys.exit(1)
     
     nodes[idx] = new_node
+    
+    # 检查所有节点使用的 Core 类型
+    core_types = set()
+    for node in nodes:
+        node_core = node.get("Core", "")
+        if node_core:
+            core_types.add(node_core)
+    
+    # 获取现有的 Cores 配置
+    existing_cores = config.get("Cores", [])
+    existing_core_types = set()
+    for core in existing_cores:
+        core_type = core.get("Type", "")
+        if core_type:
+            existing_core_types.add(core_type)
+    
+    # 检查是否需要添加新的 Core 配置
+    cores_updated = False
+    new_cores = list(existing_cores)
+    
+    # 检查 xray
+    if "xray" in core_types and "xray" not in existing_core_types:
+        new_cores.append({
+            "Type": "xray",
+            "Log": {
+                "Level": "error",
+                "ErrorPath": "/etc/V2bX/error.log"
+            },
+            "OutboundConfigPath": "/etc/V2bX/custom_outbound.json",
+            "RouteConfigPath": "/etc/V2bX/route.json"
+        })
+        cores_updated = True
+        print("已自动添加 xray Core 配置")
+    
+    # 检查 sing
+    if "sing" in core_types and "sing" not in existing_core_types:
+        new_cores.append({
+            "Type": "sing",
+            "Log": {
+                "Level": "error",
+                "Timestamp": True
+            },
+            "NTP": {
+                "Enable": False,
+                "Server": "time.apple.com",
+                "ServerPort": 0
+            },
+            "OriginalPath": "/etc/V2bX/sing_origin.json"
+        })
+        cores_updated = True
+        print("已自动添加 sing Core 配置")
+    
+    # 检查 hysteria2
+    if "hysteria2" in core_types and "hysteria2" not in existing_core_types:
+        new_cores.append({
+            "Type": "hysteria2",
+            "Log": {
+                "Level": "error"
+            }
+        })
+        cores_updated = True
+        print("已自动添加 hysteria2 Core 配置")
+    
+    # 更新 Cores 配置
+    if cores_updated:
+        config["Cores"] = new_cores
     
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=4, ensure_ascii=False)
@@ -3211,6 +3343,7 @@ try:
     for idx, node in enumerate(nodes):
         node_id = node.get("NodeID", "")
         api_host = node.get("ApiHost", "")
+        api_key = node.get("ApiKey", "")
         node_type = node.get("NodeType", "")
         
         print(f"\n节点 [索引 {idx if not '$node_index' or not '$node_index'.strip() else 0}] (NodeID={node_id}, NodeType={node_type}):")
@@ -3261,22 +3394,43 @@ try:
         print(f"  正在测试API地址可用性...", end="", flush=True)
         import urllib.request
         import urllib.error
-        test_url = f"{api_host}/api/v1/server/UniProxy/config?node_type={node_type}&node_id={node_id}&token=test"
-        try:
-            req = urllib.request.Request(test_url)
-            req.add_header("User-Agent", "V2bX-Check")
-            with urllib.request.urlopen(req, timeout=5) as response:
-                status = response.getcode()
-                if status == 200 or status == 304:
-                    print(f" \033[32m✓ 可用\033[0m")
+        # 使用实际的 API Key 进行测试
+        if not api_key:
+            print(f" \033[33m⚠ 跳过测试（未配置 ApiKey）\033[0m")
+            suggestions.append("节点配置中缺少 ApiKey，无法进行 API 测试")
+        else:
+            test_url = f"{api_host}/api/v1/server/UniProxy/config?node_type={node_type}&node_id={node_id}&token={api_key}"
+            try:
+                req = urllib.request.Request(test_url)
+                req.add_header("User-Agent", "V2bX-Check")
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    status = response.getcode()
+                    if status == 200 or status == 304:
+                        print(f" \033[32m✓ 可用\033[0m")
+                    elif status == 401 or status == 403:
+                        print(f" \033[33m⚠ 状态码: {status} (认证失败)\033[0m")
+                        suggestions.append("API Key 可能不正确，请检查配置文件中的 ApiKey")
+                    elif status == 422:
+                        print(f" \033[33m⚠ 状态码: {status} (请求参数错误)\033[0m")
+                        suggestions.append("请求参数可能不正确，请检查 NodeID、NodeType 和 ApiKey 是否匹配")
+                    else:
+                        print(f" \033[33m⚠ 状态码: {status}\033[0m")
+                        suggestions.append("API地址返回异常状态码，建议检查配置或使用备用域名")
+            except urllib.error.HTTPError as e:
+                if e.code == 422:
+                    print(f" \033[33m⚠ HTTP {e.code}: 请求参数错误\033[0m")
+                    suggestions.append("请求参数可能不正确，请检查 NodeID、NodeType 和 ApiKey 是否匹配面板配置")
+                elif e.code == 401 or e.code == 403:
+                    print(f" \033[33m⚠ HTTP {e.code}: 认证失败\033[0m")
+                    suggestions.append("API Key 可能不正确，请检查配置文件中的 ApiKey")
                 else:
-                    print(f" \033[33m⚠ 状态码: {status}\033[0m")
-                    suggestions.append("API地址返回异常状态码，建议检查配置或使用备用域名")
-        except urllib.error.URLError as e:
-            print(f" \033[31m✗ 不可用: {str(e)[:50]}\033[0m")
-            suggestions.append("API地址不可用，建议使用备用域名或检查网络连接")
-        except Exception as e:
-            print(f" \033[33m⚠ 测试失败: {str(e)[:50]}\033[0m")
+                    print(f" \033[31m✗ HTTP {e.code}: {str(e)[:50]}\033[0m")
+                    suggestions.append("API地址返回错误，建议检查配置或使用备用域名")
+            except urllib.error.URLError as e:
+                print(f" \033[31m✗ 不可用: {str(e)[:50]}\033[0m")
+                suggestions.append("API地址不可用，建议使用备用域名或检查网络连接")
+            except Exception as e:
+                print(f" \033[33m⚠ 测试失败: {str(e)[:50]}\033[0m")
         
         # 输出优化建议
         if suggestions:
