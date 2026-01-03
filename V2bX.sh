@@ -125,6 +125,11 @@ update() {
 
 config() {
     echo "V2bX在修改配置后会自动尝试重启"
+    # 清理可能存在的 swap 文件，避免 vim 警告
+    if [ -f "/etc/V2bX/.config.json.swp" ]; then
+        echo -e "${yellow}检测到旧的 swap 文件，正在清理...${plain}"
+        rm -f /etc/V2bX/.config.json.swp
+    fi
     vi /etc/V2bX/config.json
     sleep 2
     restart
@@ -1813,6 +1818,11 @@ update() {
 
 config() {
     echo "V2bX在修改配置后会自动尝试重启"
+    # 清理可能存在的 swap 文件，避免 vim 警告
+    if [ -f "/etc/V2bX/.config.json.swp" ]; then
+        echo -e "${yellow}检测到旧的 swap 文件，正在清理...${plain}"
+        rm -f /etc/V2bX/.config.json.swp
+    fi
     vi /etc/V2bX/config.json
     sleep 2
     restart
@@ -2347,12 +2357,19 @@ PYTHON_PARSE_CONFIG
                 isreality="n"
             fi
         fi
-    elif [ "$NodeType" == "hysteria" ] || [ "$NodeType" == "hysteria2" ] || [ "$NodeType" == "tuic" ] || [ "$NodeType" == "anytls" ]; then
+    elif [ "$NodeType" == "hysteria" ] || [ "$NodeType" == "hysteria2" ] || [ "$NodeType" == "tuic" ]; then
         fastopen=false
         istls="y"
+    elif [ "$NodeType" == "anytls" ]; then
+        # AnyTLS 不需要证书配置，直接设置为 none
+        fastopen=false
+        istls="n"
+        certmode="none"
+        certdomain="example.com"
+        echo -e "${green}AnyTLS 协议不需要配置证书，已自动设置为 none${plain}"
     fi
 
-    if [[ "$isreality" != "y" && "$isreality" != "Y" && "$istls" != "y" ]]; then
+    if [[ "$isreality" != "y" && "$isreality" != "Y" && "$istls" != "y" && "$NodeType" != "anytls" ]]; then
         read -rp "请选择是否进行TLS配置？(y/n，直接回车保持当前配置): " istls
         if [ -z "$istls" ]; then
             # 如果当前有证书配置，保持；否则不配置
@@ -2364,16 +2381,18 @@ PYTHON_PARSE_CONFIG
         fi
     fi
 
-    # 检查是否有固定的证书域名
-    fixed_cert_domain=$(read_fixed_cert_domain 2>/dev/null)
-    if [ $? -eq 0 ] && [ -n "$fixed_cert_domain" ]; then
-        if [ "$certdomain" = "example.com" ] || [ -z "$certdomain" ]; then
-            certdomain="$fixed_cert_domain"
+    # 如果还没有设置 certmode（非 AnyTLS 节点），检查是否有固定的证书域名
+    if [ "$NodeType" != "anytls" ]; then
+        fixed_cert_domain=$(read_fixed_cert_domain 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$fixed_cert_domain" ]; then
+            if [ "$certdomain" = "example.com" ] || [ -z "$certdomain" ]; then
+                certdomain="$fixed_cert_domain"
+            fi
+            echo -e "${green}使用固定的证书域名: $certdomain${plain}"
         fi
-        echo -e "${green}使用固定的证书域名: $certdomain${plain}"
     fi
     
-    if [[ "$isreality" != "y" && "$isreality" != "Y" && ( "$istls" == "y" || "$istls" == "Y" ) ]]; then
+    if [[ "$isreality" != "y" && "$isreality" != "Y" && ( "$istls" == "y" || "$istls" == "Y" ) && "$NodeType" != "anytls" ]]; then
         echo -e "${yellow}请选择证书申请模式 [当前: $certmode]：${plain}"
         echo -e "${green}1. http模式自动申请，节点域名已正确解析${plain}"
         echo -e "${green}2. dns模式自动申请，需填入正确域名服务商API参数${plain}"
@@ -4394,25 +4413,35 @@ add_node_config() {
     istls=""
     if [ "$NodeType" == "vless" ]; then
         read -rp "请选择是否为reality节点？(y/n)" isreality
-    elif [ "$NodeType" == "hysteria" ] || [ "$NodeType" == "hysteria2" ] || [ "$NodeType" == "tuic" ] || [ "$NodeType" == "anytls" ]; then
+    elif [ "$NodeType" == "hysteria" ] || [ "$NodeType" == "hysteria2" ] || [ "$NodeType" == "tuic" ]; then
         fastopen=false
         istls="y"
+    elif [ "$NodeType" == "anytls" ]; then
+        # AnyTLS 不需要证书配置，直接设置为 none
+        fastopen=false
+        istls="n"
+        certmode="none"
+        certdomain="example.com"
+        echo -e "${green}AnyTLS 协议不需要配置证书，已自动设置为 none${plain}"
     fi
 
-    if [[ "$isreality" != "y" && "$isreality" != "Y" &&  "$istls" != "y" ]]; then
+    if [[ "$isreality" != "y" && "$isreality" != "Y" &&  "$istls" != "y" && "$NodeType" != "anytls" ]]; then
         read -rp "请选择是否进行TLS配置？(y/n)" istls
     fi
 
-    certmode="none"
-    certdomain="example.com"
-    # 检查是否有固定的证书域名
-    fixed_cert_domain=$(read_fixed_cert_domain 2>/dev/null)
-    if [ $? -eq 0 ] && [ -n "$fixed_cert_domain" ]; then
-        certdomain="$fixed_cert_domain"
-        echo -e "${green}使用固定的证书域名: $certdomain${plain}"
+    # 如果还没有设置 certmode（非 AnyTLS 节点），初始化为 none
+    if [ "$NodeType" != "anytls" ]; then
+        certmode="none"
+        certdomain="example.com"
+        # 检查是否有固定的证书域名
+        fixed_cert_domain=$(read_fixed_cert_domain 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$fixed_cert_domain" ]; then
+            certdomain="$fixed_cert_domain"
+            echo -e "${green}使用固定的证书域名: $certdomain${plain}"
+        fi
     fi
     
-    if [[ "$isreality" != "y" && "$isreality" != "Y" && ( "$istls" == "y" || "$istls" == "Y" ) ]]; then
+    if [[ "$isreality" != "y" && "$isreality" != "Y" && ( "$istls" == "y" || "$istls" == "Y" ) && "$NodeType" != "anytls" ]]; then
         echo -e "${yellow}请选择证书申请模式：${plain}"
         echo -e "${green}1. http模式自动申请，节点域名已正确解析${plain}"
         echo -e "${green}2. dns模式自动申请，需填入正确域名服务商API参数${plain}"
@@ -4769,38 +4798,147 @@ PYTHON_SCRIPT
             if [[ "$continue_adding_node" =~ ^[Nn][Oo]? ]]; then
                 break
             elif [ "$fixed_api_info" = false ]; then
-                backup_domains=$(read_backup_domains 2>/dev/null)
-                if [ $? -eq 0 ] && [ -n "$backup_domains" ]; then
-                    echo -e "${green}检测到备用域名列表，可以选择：${plain}"
-                    echo -e "${green}1. 从备用域名列表中选择${plain}"
-                    echo -e "${green}2. 手动输入机场网址${plain}"
-                    read -rp "请选择 (1/2，默认2): " select_method
-                    if [ "$select_method" = "1" ]; then
-                        echo -e "${yellow}备用域名列表：${plain}"
-                        domain_index=1
-                        domain_array=()
-                        while IFS= read -r domain; do
-                            if [ -n "$domain" ]; then
-                                echo -e "${green}  ${domain_index}. ${domain}${plain}"
-                                domain_array+=("$domain")
-                                ((domain_index++))
+                # 尝试从现有节点中读取 ApiHost 和 ApiKey 作为默认值
+                last_api_host=""
+                last_api_key=""
+                if [ -f "/etc/V2bX/config.json" ]; then
+                    if command -v python3 &> /dev/null; then
+                        last_api_info=$(python3 << 'PYTHON_GET_LAST_API'
+import json
+import sys
+try:
+    with open('/etc/V2bX/config.json', 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    nodes = config.get('Nodes', [])
+    if nodes:
+        last_node = nodes[-1]
+        print(f"APIHOST:{last_node.get('ApiHost', '')}")
+        print(f"APIKEY:{last_node.get('ApiKey', '')}")
+    sys.exit(0)
+except Exception as e:
+    sys.exit(1)
+PYTHON_GET_LAST_API
+)
+                        if [ $? -eq 0 ] && [ -n "$last_api_info" ]; then
+                            last_api_host=$(echo "$last_api_info" | grep "^APIHOST:" | cut -d: -f2-)
+                            last_api_key=$(echo "$last_api_info" | grep "^APIKEY:" | cut -d: -f2-)
+                        fi
+                    elif command -v python &> /dev/null; then
+                        last_api_info=$(python << 'PYTHON_GET_LAST_API'
+import json
+import sys
+try:
+    with open('/etc/V2bX/config.json', 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    nodes = config.get('Nodes', [])
+    if nodes:
+        last_node = nodes[-1]
+        print("APIHOST:" + str(last_node.get('ApiHost', '')))
+        print("APIKEY:" + str(last_node.get('ApiKey', '')))
+    sys.exit(0)
+except Exception as e:
+    sys.exit(1)
+PYTHON_GET_LAST_API
+)
+                        if [ $? -eq 0 ] && [ -n "$last_api_info" ]; then
+                            last_api_host=$(echo "$last_api_info" | grep "^APIHOST:" | cut -d: -f2-)
+                            last_api_key=$(echo "$last_api_info" | grep "^APIKEY:" | cut -d: -f2-)
+                        fi
+                    fi
+                fi
+                
+                # 如果从现有节点读取到了 ApiHost 和 ApiKey，询问是否复用
+                if [ -n "$last_api_host" ] && [ -n "$last_api_key" ]; then
+                    echo -e "${green}检测到上次使用的配置：${plain}"
+                    echo -e "${green}  机场网址: $last_api_host${plain}"
+                    echo -e "${green}  API Key: ${last_api_key:0:10}...${plain}"
+                    read -rp "是否复用上次的机场网址和API Key？(y/n，默认y): " reuse_last
+                    if [[ "$reuse_last" =~ ^[Yy]?$ ]] || [ -z "$reuse_last" ]; then
+                        ApiHost="$last_api_host"
+                        ApiKey="$last_api_key"
+                        echo -e "${green}已复用上次的配置${plain}"
+                    else
+                        # 用户选择不使用上次的配置，继续输入
+                        backup_domains=$(read_backup_domains 2>/dev/null)
+                        if [ $? -eq 0 ] && [ -n "$backup_domains" ]; then
+                            echo -e "${green}检测到备用域名列表，可以选择：${plain}"
+                            echo -e "${green}1. 从备用域名列表中选择${plain}"
+                            echo -e "${green}2. 手动输入机场网址${plain}"
+                            read -rp "请选择 (1/2，默认2): " select_method
+                            if [ "$select_method" = "1" ]; then
+                                echo -e "${yellow}备用域名列表：${plain}"
+                                domain_index=1
+                                domain_array=()
+                                while IFS= read -r domain; do
+                                    if [ -n "$domain" ]; then
+                                        echo -e "${green}  ${domain_index}. ${domain}${plain}"
+                                        domain_array+=("$domain")
+                                        ((domain_index++))
+                                    fi
+                                done <<< "$backup_domains"
+                                read -rp "请选择备用域名编号: " selected_index
+                                if [[ "$selected_index" =~ ^[0-9]+$ ]] && [ "$selected_index" -ge 1 ] && [ "$selected_index" -le "${#domain_array[@]}" ]; then
+                                    ApiHost="${domain_array[$((selected_index-1))]}"
+                                    echo -e "${green}已选择: $ApiHost${plain}"
+                                else
+                                    echo -e "${red}无效的选择，将使用手动输入${plain}"
+                                    read -rp "请输入机场网址 [上次: $last_api_host]: " ApiHost
+                                    if [ -z "$ApiHost" ]; then
+                                        ApiHost="$last_api_host"
+                                    fi
+                                fi
+                            else
+                                read -rp "请输入机场网址 [上次: $last_api_host]: " ApiHost
+                                if [ -z "$ApiHost" ]; then
+                                    ApiHost="$last_api_host"
+                                fi
                             fi
-                        done <<< "$backup_domains"
-                        read -rp "请选择备用域名编号: " selected_index
-                        if [[ "$selected_index" =~ ^[0-9]+$ ]] && [ "$selected_index" -ge 1 ] && [ "$selected_index" -le "${#domain_array[@]}" ]; then
-                            ApiHost="${domain_array[$((selected_index-1))]}"
-                            echo -e "${green}已选择: $ApiHost${plain}"
                         else
-                            echo -e "${red}无效的选择，将使用手动输入${plain}"
+                            read -rp "请输入机场网址 [上次: $last_api_host]: " ApiHost
+                            if [ -z "$ApiHost" ]; then
+                                ApiHost="$last_api_host"
+                            fi
+                        fi
+                        read -rp "请输入面板对接API Key [上次: ${last_api_key:0:10}...]（直接回车复用）: " ApiKey
+                        if [ -z "$ApiKey" ]; then
+                            ApiKey="$last_api_key"
+                        fi
+                    fi
+                else
+                    # 没有找到上次的配置，正常输入
+                    backup_domains=$(read_backup_domains 2>/dev/null)
+                    if [ $? -eq 0 ] && [ -n "$backup_domains" ]; then
+                        echo -e "${green}检测到备用域名列表，可以选择：${plain}"
+                        echo -e "${green}1. 从备用域名列表中选择${plain}"
+                        echo -e "${green}2. 手动输入机场网址${plain}"
+                        read -rp "请选择 (1/2，默认2): " select_method
+                        if [ "$select_method" = "1" ]; then
+                            echo -e "${yellow}备用域名列表：${plain}"
+                            domain_index=1
+                            domain_array=()
+                            while IFS= read -r domain; do
+                                if [ -n "$domain" ]; then
+                                    echo -e "${green}  ${domain_index}. ${domain}${plain}"
+                                    domain_array+=("$domain")
+                                    ((domain_index++))
+                                fi
+                            done <<< "$backup_domains"
+                            read -rp "请选择备用域名编号: " selected_index
+                            if [[ "$selected_index" =~ ^[0-9]+$ ]] && [ "$selected_index" -ge 1 ] && [ "$selected_index" -le "${#domain_array[@]}" ]; then
+                                ApiHost="${domain_array[$((selected_index-1))]}"
+                                echo -e "${green}已选择: $ApiHost${plain}"
+                            else
+                                echo -e "${red}无效的选择，将使用手动输入${plain}"
+                                read -rp "请输入机场网址：" ApiHost
+                            fi
+                        else
                             read -rp "请输入机场网址：" ApiHost
                         fi
                     else
                         read -rp "请输入机场网址：" ApiHost
                     fi
-                else
-                    read -rp "请输入机场网址：" ApiHost
+                    read -rp "请输入面板对接API Key：" ApiKey
                 fi
-                read -rp "请输入面板对接API Key：" ApiKey
             fi
             add_node_config
         fi
