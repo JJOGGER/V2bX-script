@@ -2053,12 +2053,99 @@ PYTHON_READ_NODE
         return 1
     fi
 
-    # 解析当前节点配置
-    current_core=$(echo "$node_data" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('Core',''))" 2>/dev/null || echo "$node_data" | python -c "import json,sys; d=json.load(sys.stdin); print(d.get('Core',''))" 2>/dev/null)
-    current_nodeid=$(echo "$node_data" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('NodeID',''))" 2>/dev/null || echo "$node_data" | python -c "import json,sys; d=json.load(sys.stdin); print(d.get('NodeID',''))" 2>/dev/null)
-    current_apihost=$(echo "$node_data" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ApiHost',''))" 2>/dev/null || echo "$node_data" | python -c "import json,sys; d=json.load(sys.stdin); print(d.get('ApiHost',''))" 2>/dev/null)
-    current_apikey=$(echo "$node_data" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ApiKey',''))" 2>/dev/null || echo "$node_data" | python -c "import json,sys; d=json.load(sys.stdin); print(d.get('ApiKey',''))" 2>/dev/null)
-    current_nodetype=$(echo "$node_data" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('NodeType',''))" 2>/dev/null || echo "$node_data" | python -c "import json,sys; d=json.load(sys.stdin); print(d.get('NodeType',''))" 2>/dev/null)
+    # 解析当前节点配置（使用Python一次性读取所有字段，更可靠）
+    if command -v python3 &> /dev/null; then
+        current_config=$(python3 << PYTHON_PARSE_CONFIG
+import json
+import sys
+node_data = """$node_data"""
+try:
+    node = json.loads(node_data)
+    cert_config = node.get('CertConfig', {})
+    print(f"CORE:{node.get('Core', '')}")
+    print(f"NODEID:{node.get('NodeID', '')}")
+    print(f"APIHOST:{node.get('ApiHost', '')}")
+    print(f"APIKEY:{node.get('ApiKey', '')}")
+    print(f"NODETYPE:{node.get('NodeType', '')}")
+    print(f"CERTMODE:{cert_config.get('CertMode', 'none')}")
+    print(f"CERTDOMAIN:{cert_config.get('CertDomain', 'example.com')}")
+    print(f"TIMEOUT:{node.get('Timeout', 30)}")
+    print(f"LISTENIP:{node.get('ListenIP', '')}")
+    print(f"TCPFASTOPEN:{node.get('TCPFastOpen', True)}")
+except Exception as e:
+    print(f"Error: {e}", file=sys.stderr)
+    sys.exit(1)
+PYTHON_PARSE_CONFIG
+)
+        if [ $? -ne 0 ]; then
+            echo -e "${red}解析节点配置失败${plain}"
+            return 1
+        fi
+        current_core=$(echo "$current_config" | grep "^CORE:" | cut -d: -f2)
+        current_nodeid=$(echo "$current_config" | grep "^NODEID:" | cut -d: -f2)
+        current_apihost=$(echo "$current_config" | grep "^APIHOST:" | cut -d: -f2)
+        current_apikey=$(echo "$current_config" | grep "^APIKEY:" | cut -d: -f2)
+        current_nodetype=$(echo "$current_config" | grep "^NODETYPE:" | cut -d: -f2)
+        current_certmode=$(echo "$current_config" | grep "^CERTMODE:" | cut -d: -f2)
+        current_certdomain=$(echo "$current_config" | grep "^CERTDOMAIN:" | cut -d: -f2)
+        current_timeout=$(echo "$current_config" | grep "^TIMEOUT:" | cut -d: -f2)
+        current_listenip=$(echo "$current_config" | grep "^LISTENIP:" | cut -d: -f2)
+        current_tcpfastopen=$(echo "$current_config" | grep "^TCPFASTOPEN:" | cut -d: -f2)
+    elif command -v python &> /dev/null; then
+        current_config=$(python << PYTHON_PARSE_CONFIG
+import json
+import sys
+node_data = """$node_data"""
+try:
+    node = json.loads(node_data)
+    cert_config = node.get('CertConfig', {})
+    print("CORE:" + str(node.get('Core', '')))
+    print("NODEID:" + str(node.get('NodeID', '')))
+    print("APIHOST:" + str(node.get('ApiHost', '')))
+    print("APIKEY:" + str(node.get('ApiKey', '')))
+    print("NODETYPE:" + str(node.get('NodeType', '')))
+    print("CERTMODE:" + str(cert_config.get('CertMode', 'none')))
+    print("CERTDOMAIN:" + str(cert_config.get('CertDomain', 'example.com')))
+    print("TIMEOUT:" + str(node.get('Timeout', 30)))
+    print("LISTENIP:" + str(node.get('ListenIP', '')))
+    print("TCPFASTOPEN:" + str(node.get('TCPFastOpen', True)))
+except Exception as e:
+    print("Error: " + str(e), file=sys.stderr)
+    sys.exit(1)
+PYTHON_PARSE_CONFIG
+)
+        if [ $? -ne 0 ]; then
+            echo -e "${red}解析节点配置失败${plain}"
+            return 1
+        fi
+        current_core=$(echo "$current_config" | grep "^CORE:" | cut -d: -f2)
+        current_nodeid=$(echo "$current_config" | grep "^NODEID:" | cut -d: -f2)
+        current_apihost=$(echo "$current_config" | grep "^APIHOST:" | cut -d: -f2)
+        current_apikey=$(echo "$current_config" | grep "^APIKEY:" | cut -d: -f2)
+        current_nodetype=$(echo "$current_config" | grep "^NODETYPE:" | cut -d: -f2)
+        current_certmode=$(echo "$current_config" | grep "^CERTMODE:" | cut -d: -f2)
+        current_certdomain=$(echo "$current_config" | grep "^CERTDOMAIN:" | cut -d: -f2)
+        current_timeout=$(echo "$current_config" | grep "^TIMEOUT:" | cut -d: -f2)
+        current_listenip=$(echo "$current_config" | grep "^LISTENIP:" | cut -d: -f2)
+        current_tcpfastopen=$(echo "$current_config" | grep "^TCPFASTOPEN:" | cut -d: -f2)
+    else
+        echo -e "${red}未找到 Python，无法解析节点配置${plain}"
+        return 1
+    fi
+    
+    # 设置默认值
+    if [ -z "$current_certmode" ]; then
+        current_certmode="none"
+    fi
+    if [ -z "$current_certdomain" ]; then
+        current_certdomain="example.com"
+    fi
+    if [ -z "$current_timeout" ]; then
+        current_timeout="30"
+    fi
+    if [ -z "$current_tcpfastopen" ]; then
+        current_tcpfastopen="true"
+    fi
 
     echo -e "${green}当前节点配置：${plain}"
     echo -e "  Core: $current_core"
@@ -2142,10 +2229,24 @@ PYTHON_READ_NODE
     fi
 
     # ApiKey
-    read -rp "请输入面板对接API Key [当前: ${current_apikey:0:10}...]: " ApiKey
-    if [ -z "$ApiKey" ]; then
-        ApiKey="$current_apikey"
-    fi
+    while true; do
+        read -rp "请输入面板对接API Key [当前: ${current_apikey:0:10}...]（直接回车保持当前值）: " ApiKey
+        if [ -z "$ApiKey" ]; then
+            ApiKey="$current_apikey"
+            break
+        elif [ "$ApiKey" = "," ] || [ "$ApiKey" = "，" ]; then
+            # 如果只输入了逗号（可能是误输入），使用当前值
+            echo -e "${yellow}检测到无效输入，使用当前值${plain}"
+            ApiKey="$current_apikey"
+            break
+        elif [ ${#ApiKey} -lt 5 ]; then
+            # API Key 通常至少5个字符
+            echo -e "${yellow}API Key 长度过短，请重新输入（或直接回车保持当前值）${plain}"
+        else
+            # API Key 验证通过
+            break
+        fi
+    done
 
     # 测试API地址是否可用，如果不可用则尝试备用域名
     echo -e "${yellow}正在测试API地址可用性...${plain}"
@@ -2212,67 +2313,126 @@ PYTHON_READ_NODE
         fi
     fi
 
-    # TLS配置（简化处理，保持原有逻辑）
-    fastopen=true
+    # TLS配置（从当前配置读取，允许保持默认值）
+    # 读取当前节点的 TLS 相关配置
+    current_cert_config=$(echo "$node_data" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('CertConfig', {}), ensure_ascii=False))" 2>/dev/null || echo "$node_data" | python -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('CertConfig', {}), ensure_ascii=False))" 2>/dev/null)
+    
+    # 使用当前配置的证书模式
+    certmode="$current_certmode"
+    certdomain="$current_certdomain"
+    
+    # 根据当前配置判断 fastopen
+    if [ "$current_tcpfastopen" = "true" ] || [ "$current_tcpfastopen" = "True" ]; then
+        fastopen=true
+    else
+        fastopen=false
+    fi
+    
     isreality=""
     istls=""
+    
+    # 如果当前证书模式不是 none，说明已经配置了 TLS
+    if [ "$certmode" != "none" ]; then
+        istls="y"
+    fi
+    
+    # 根据节点类型判断是否需要 TLS
     if [ "$NodeType" == "vless" ]; then
-        read -rp "请选择是否为reality节点？(y/n): " isreality
+        read -rp "请选择是否为reality节点？(y/n，直接回车保持当前配置): " isreality
+        if [ -z "$isreality" ]; then
+            # 检查当前配置是否为 reality（通过检查 CertMode 或其他特征）
+            if [ "$certmode" == "none" ] || [ -z "$certmode" ]; then
+                isreality=""
+            else
+                isreality="n"
+            fi
+        fi
     elif [ "$NodeType" == "hysteria" ] || [ "$NodeType" == "hysteria2" ] || [ "$NodeType" == "tuic" ] || [ "$NodeType" == "anytls" ]; then
         fastopen=false
         istls="y"
     fi
 
     if [[ "$isreality" != "y" && "$isreality" != "Y" && "$istls" != "y" ]]; then
-        read -rp "请选择是否进行TLS配置？(y/n): " istls
+        read -rp "请选择是否进行TLS配置？(y/n，直接回车保持当前配置): " istls
+        if [ -z "$istls" ]; then
+            # 如果当前有证书配置，保持；否则不配置
+            if [ "$certmode" != "none" ] && [ -n "$certmode" ]; then
+                istls="y"
+            else
+                istls="n"
+            fi
+        fi
     fi
 
-    certmode="none"
-    certdomain="example.com"
     # 检查是否有固定的证书域名
     fixed_cert_domain=$(read_fixed_cert_domain 2>/dev/null)
     if [ $? -eq 0 ] && [ -n "$fixed_cert_domain" ]; then
-        certdomain="$fixed_cert_domain"
+        if [ "$certdomain" = "example.com" ] || [ -z "$certdomain" ]; then
+            certdomain="$fixed_cert_domain"
+        fi
         echo -e "${green}使用固定的证书域名: $certdomain${plain}"
     fi
     
     if [[ "$isreality" != "y" && "$isreality" != "Y" && ( "$istls" == "y" || "$istls" == "Y" ) ]]; then
-        echo -e "${yellow}请选择证书申请模式：${plain}"
+        echo -e "${yellow}请选择证书申请模式 [当前: $certmode]：${plain}"
         echo -e "${green}1. http模式自动申请，节点域名已正确解析${plain}"
         echo -e "${green}2. dns模式自动申请，需填入正确域名服务商API参数${plain}"
         echo -e "${green}3. self模式，自签证书或提供已有证书文件${plain}"
-        read -rp "请输入: " certmode_input
-        case "$certmode_input" in
-            1 ) certmode="http" ;;
-            2 ) certmode="dns" ;;
-            3 ) certmode="self" ;;
-        esac
-        if [ -z "$fixed_cert_domain" ] || [ "$fixed_cert_domain" = "" ]; then
-            read -rp "请输入节点证书域名(example.com): " certdomain
-            if [ -z "$certdomain" ]; then
-                certdomain="example.com"
-            fi
-        else
-            read -rp "请输入节点证书域名(当前固定: $certdomain，直接回车使用固定域名): " input_certdomain
-            if [ -n "$input_certdomain" ]; then
-                certdomain="$input_certdomain"
-            fi
+        echo -e "${green}4. none模式，不使用证书${plain}"
+        read -rp "请输入（直接回车保持当前值）: " certmode_input
+        if [ -n "$certmode_input" ]; then
+            case "$certmode_input" in
+                1 ) certmode="http" ;;
+                2 ) certmode="dns" ;;
+                3 ) certmode="self" ;;
+                4 ) certmode="none" ;;
+                * ) echo -e "${yellow}无效输入，保持当前值: $certmode${plain}" ;;
+            esac
         fi
-        # 询问是否固定证书域名
-        if [ -z "$fixed_cert_domain" ] || [ "$fixed_cert_domain" = "" ]; then
-            read -rp "是否固定此证书域名，下次添加节点时自动使用？(y/n，默认n): " fix_cert_domain
-            if [ "$fix_cert_domain" = "y" ] || [ "$fix_cert_domain" = "Y" ]; then
-                save_fixed_cert_domain "$certdomain"
-                echo -e "${green}已固定证书域名: $certdomain${plain}"
+        
+        if [ "$certmode" != "none" ]; then
+            if [ -z "$fixed_cert_domain" ] || [ "$fixed_cert_domain" = "" ]; then
+                read -rp "请输入节点证书域名 [当前: $certdomain]（直接回车保持当前值）: " input_certdomain
+                if [ -n "$input_certdomain" ]; then
+                    certdomain="$input_certdomain"
+                fi
+            else
+                read -rp "请输入节点证书域名 [当前固定: $certdomain]（直接回车使用固定域名）: " input_certdomain
+                if [ -n "$input_certdomain" ]; then
+                    certdomain="$input_certdomain"
+                fi
+            fi
+            # 询问是否固定证书域名
+            if [ -z "$fixed_cert_domain" ] || [ "$fixed_cert_domain" = "" ]; then
+                read -rp "是否固定此证书域名，下次添加节点时自动使用？(y/n，默认n): " fix_cert_domain
+                if [ "$fix_cert_domain" = "y" ] || [ "$fix_cert_domain" = "Y" ]; then
+                    save_fixed_cert_domain "$certdomain"
+                    echo -e "${green}已固定证书域名: $certdomain${plain}"
+                fi
             fi
         fi
     fi
 
-    # 生成节点配置（复用add_node_config的逻辑）
-    ipv6_support=$(check_ipv6_support)
-    listen_ip="0.0.0.0"
-    if [ "$ipv6_support" -eq 1 ]; then
-        listen_ip="::"
+    # 生成节点配置（保留当前配置中的其他字段）
+    # 从当前节点配置中读取其他字段的默认值
+    current_timeout_val="$current_timeout"
+    current_listenip_val="$current_listenip"
+    
+    # 如果当前配置中没有这些字段，使用默认值
+    if [ -z "$current_timeout_val" ] || [ "$current_timeout_val" = "null" ]; then
+        current_timeout_val="30"
+    fi
+    if [ -z "$current_listenip_val" ] || [ "$current_listenip_val" = "null" ]; then
+        if [ "$core" == "sing" ]; then
+            ipv6_support=$(check_ipv6_support)
+            if [ "$ipv6_support" -eq 1 ]; then
+                current_listenip_val="::"
+            else
+                current_listenip_val="0.0.0.0"
+            fi
+        else
+            current_listenip_val="0.0.0.0"
+        fi
     fi
 
     # 构建新的节点配置
@@ -2284,7 +2444,7 @@ PYTHON_READ_NODE
             "ApiKey": "$ApiKey",
             "NodeID": $NodeID,
             "NodeType": "$NodeType",
-            "Timeout": 30,
+            "Timeout": $current_timeout_val,
             "ListenIP": "0.0.0.0",
             "SendIP": "0.0.0.0",
             "DeviceOnlineMinTraffic": 200,
@@ -2316,8 +2476,8 @@ EOF
             "ApiKey": "$ApiKey",
             "NodeID": $NodeID,
             "NodeType": "$NodeType",
-            "Timeout": 30,
-            "ListenIP": "$listen_ip",
+            "Timeout": $current_timeout_val,
+            "ListenIP": "$current_listenip_val",
             "SendIP": "0.0.0.0",
             "DeviceOnlineMinTraffic": 200,
             "MinReportTraffic": 0,
@@ -2339,6 +2499,10 @@ EOF
 EOF
 )
     elif [ "$core" == "hysteria2" ]; then
+        # hysteria2 的 ListenIP 通常是空字符串
+        if [ -z "$current_listenip_val" ] || [ "$current_listenip_val" = "null" ]; then
+            current_listenip_val=""
+        fi
         new_node_config=$(cat <<EOF
 {
             "Core": "$core",
@@ -2347,8 +2511,8 @@ EOF
             "NodeID": $NodeID,
             "NodeType": "$NodeType",
             "Hysteria2ConfigPath": "/etc/V2bX/hy2config.yaml",
-            "Timeout": 30,
-            "ListenIP": "",
+            "Timeout": $current_timeout_val,
+            "ListenIP": "$current_listenip_val",
             "SendIP": "0.0.0.0",
             "DeviceOnlineMinTraffic": 200,
             "MinReportTraffic": 0,
